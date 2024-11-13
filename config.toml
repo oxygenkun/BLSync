@@ -1,4 +1,5 @@
 interval = 1200
+request_timeout = 300
 
 [credential]
 sessdata = ""
@@ -9,3 +10,5 @@ ac_time_value = ""
 
 
 [favorite_list]
+# 键值对存储，key是收藏夹id，value是下载存储路径
+# fid = "<download_path>"
