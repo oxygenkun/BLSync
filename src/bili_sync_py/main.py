@@ -1,16 +1,16 @@
 import asyncio
 import dataclasses
 import pathlib
+from contextlib import asynccontextmanager
 
-# from fastapi import FastAPI
-import random
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from .configs import Config, load_configs
 from .db_access import already_download_bvids, already_download_bvids_add
 from .downloader import download_video
 from .scraper import BScraper
-
-# app = FastAPI()
 
 task_queue = asyncio.Queue()
 configs = load_configs()
@@ -27,14 +27,15 @@ class BiliVideoTaskContext(TaskContext):
     favid: str
 
 
-async def task(task_context):
-    sleep_time = random.uniform(1, 10)
-    print(f"[comsumer] task {task_context} started for {sleep_time} seconds")
-    await asyncio.sleep(sleep_time)
-    print(f"[comsumer] task {task_context} done")
+class TaskRequest(BaseModel):
+    bid: str
+    favid: str = -1  # 默认值为-1表示没有收藏夹id
 
 
-async def task_executor():
+async def task_consumer():
+    """
+    处理下载任务队列
+    """
     while True:
         task_context = await task_queue.get()
 
@@ -63,7 +64,10 @@ async def task_executor():
         print(f"[task_executor] queue has {task_queue.qsize()} tasks")
 
 
-async def periodic_task_generator():
+async def task_producer():
+    """
+    定时获取
+    """
     bs = BScraper(configs)
     while True:
         async for bvid, favid in bs.get_all_bvids():
@@ -76,13 +80,50 @@ async def periodic_task_generator():
         await asyncio.sleep(configs.interval)
 
 
-async def start():
-    await asyncio.gather(task_executor(), periodic_task_generator())
+async def start_background_tasks():
+    """
+    启动任务队列
+    """
+    task1 = asyncio.create_task(task_producer())
+    task2 = asyncio.create_task(task_consumer())
+    await asyncio.gather(task1, task2)
 
 
-def main():
-    asyncio.run(start())
+###################
+# FastAPI 相关代码 #
+###################
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    启动Web服务前，启动后台任务
+    """
+    try:
+        asyncio.create_task(start_background_tasks())
+        yield
+    finally:
+        await app.state.shutdown()
+        await app.state.cleanup()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post("/tasks/")
+async def create_task(task: TaskRequest):
+    try:
+        await task_queue.put(
+            BiliVideoTaskContext(config=configs, bid=task.bid, favid=task.favid)
+        )
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def start_server():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":
-    main()
+    start_server()

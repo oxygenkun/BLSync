@@ -25,7 +25,7 @@
 
   ```bash
   rye sync
-  rye run bspy
+  rye run bs
   ```
 
 # 配置文件

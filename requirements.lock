@@ -34,6 +34,8 @@ brotli==1.1.0
 certifi==2024.8.30
     # via httpcore
     # via httpx
+click==8.1.7
+    # via uvicorn
 colorama==0.4.6
     # via bilibili-api-python
 fastapi==0.115.5
@@ -43,6 +45,7 @@ frozenlist==1.5.0
     # via aiosignal
 h11==0.14.0
     # via httpcore
+    # via uvicorn
 httpcore==1.0.6
     # via httpx
 httpx==0.26.0
@@ -100,6 +103,8 @@ typing-extensions==4.12.2
     # via qrcode
 tzlocal==5.2
     # via apscheduler
+uvicorn==0.32.0
+    # via bili-sync-py
 yarl==1.11.1
     # via aiohttp
     # via bilibili-api-python
