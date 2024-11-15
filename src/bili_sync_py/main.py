@@ -47,12 +47,12 @@ async def task_executor():
             ):
                 print(f"Already downloaded {task_context.bid}")
             else:
-                fav_downlaod_path = pathlib.Path(
+                fav_download_path = pathlib.Path(
                     configs.favorite_list[task_context.favid]
                 )
                 await download_video(
                     bvid=task_context.bid,
-                    download_path=fav_downlaod_path,
+                    download_path=fav_download_path,
                     configs=task_context.config,
                 )
                 already_download_bvids_add(
