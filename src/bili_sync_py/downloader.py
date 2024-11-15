@@ -1,4 +1,4 @@
-from subprocess import run as subprocess_run, CalledProcessError
+import asyncio
 
 
 async def download_video(
@@ -41,8 +41,12 @@ async def download_video(
     if extra_list_options:
         command.extend(extra_list_options)
 
-    try:
-        subprocess_run(command, check=True)
-        print(f"[info] {download_path} 下载成功")
-    except CalledProcessError:
-        print(f"[error] {download_path} 下载失败")
+    print(f"start downloading {bvid}")
+    proc = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    if stdout:
+        print(f"[stdout]\n{stdout.decode()}")
+    if stderr:
+        print(f"[stderr]\n{stderr.decode()}")
