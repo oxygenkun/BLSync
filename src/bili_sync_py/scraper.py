@@ -37,7 +37,7 @@ class BScraper:
 
     async def get_all_bvids(self):
         for favid in self.config.favorite_list.keys():
-            if favid < 0:
+            if int(favid) < 0:
                 continue 
             async for bvid in self._get_bvids_from_favid(favid):
                 if not bvid:
