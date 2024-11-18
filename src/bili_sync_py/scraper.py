@@ -1,6 +1,6 @@
 from .configs import Config
 from bilibili_api import Credential, favorite_list, video
-
+from loguru import logger
 
 class BScraper:
     config: Config
@@ -32,11 +32,13 @@ class BScraper:
             for id in ids:
                 yield id["bvid"]
         except Exception as e:
-            print(f"发生错误: {e}，下一轮重试")
+            logger.exception(e)
             yield None
 
     async def get_all_bvids(self):
         for favid in self.config.favorite_list.keys():
+            if favid < 0:
+                continue 
             async for bvid in self._get_bvids_from_favid(favid):
                 if not bvid:
                     continue
@@ -64,6 +66,6 @@ class BScraper:
             # TODO
             # 失效的视频添加到已经下载集合
             # already_download_bvids_add(media_id=media_id, bvid=bvid)
-            print(bvid + "视频失效")
+            logger.warning(bvid + "视频失效")
             return None
         return info

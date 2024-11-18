@@ -54,6 +54,8 @@ idna==3.10
     # via anyio
     # via httpx
     # via yarl
+loguru==0.7.2
+    # via bili-sync-py
 lxml==5.3.0
     # via bilibili-api-python
 multidict==6.1.0
