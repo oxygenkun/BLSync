@@ -42,9 +42,15 @@ async def download_video(
         command.extend(extra_list_options)
 
     print(f"start downloading {bvid}")
+
     proc = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
+    while True:
+        line = await proc.stdout.readline()
+        if not line:
+            break
+        print(line.decode().strip())
     stdout, stderr = await proc.communicate()
     if stdout:
         print(f"[stdout]\n{stdout.decode()}")
