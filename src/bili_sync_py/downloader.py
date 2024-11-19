@@ -51,6 +51,7 @@ async def download_video(
         if not line:
             break
         print(line.decode().strip())
+        await asyncio.sleep(0.5)
     stdout, stderr = await proc.communicate()
     if stdout:
         print(f"[stdout]\n{stdout.decode()}")
