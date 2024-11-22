@@ -1,6 +1,6 @@
 [project]
 name = "BLSync"
-version = "0.1.0"
+version = "0.1.1"
 description = "BLSync is for syncing your bilibili favorite list to local."
 dependencies = [
     "toml>=0.10.2",
