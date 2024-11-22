@@ -6,7 +6,7 @@ RUN python -m pip install uv
 RUN uv tool install yutto
 
 # copy files
-COPY pyproject.toml requirements.lock config.toml README.md src /app/
+COPY pyproject.toml requirements.lock README.md config src /app/
 
 # install dependencies and project
 WORKDIR /app
