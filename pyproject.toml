@@ -1,7 +1,7 @@
 [project]
-name = "bili-sync-py"
+name = "BLSync"
 version = "0.1.0"
-description = "Bili-sync-py is for syncing your bilibili favorite list to local. Folked from bili-syn-yt-dlp."
+description = "BLSync is for syncing your bilibili favorite list to local."
 dependencies = [
     "toml>=0.10.2",
     "bilibili-api-python>=16.3.0",
@@ -10,10 +10,10 @@ dependencies = [
     "loguru>=0.7.2",
 ]
 readme = "README.md"
-requires-python = ">= 3.8"
+requires-python = ">= 3.11"
 
 [project.scripts]
-bs = 'bili_sync_py.main:start_server'
+bs = 'blsync.main:start_server'
 
 [build-system]
 requires = ["hatchling"]
@@ -21,14 +21,10 @@ build-backend = "hatchling.build"
 
 [tool.rye]
 managed = true
-dev-dependencies = [
-    "ruff>=0.7.3",
-    "pytest>=8.3.3",
-    "pytest-asyncio>=0.24.0",
-]
+dev-dependencies = ["ruff>=0.7.3", "pytest>=8.3.3", "pytest-asyncio>=0.24.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bili_sync_py"]
+packages = ["src/blsync"]

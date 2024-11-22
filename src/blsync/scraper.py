@@ -2,6 +2,7 @@ from .configs import Config
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
 
+
 class BScraper:
     config: Config
     credential: Credential
@@ -38,7 +39,7 @@ class BScraper:
     async def get_all_bvids(self):
         for favid in self.config.favorite_list.keys():
             if int(favid) < 0:
-                continue 
+                continue
             async for bvid in self._get_bvids_from_favid(favid):
                 if not bvid:
                     continue

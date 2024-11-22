@@ -1,6 +1,6 @@
-# BILI-SYNC-PY
+# BLSync
 
-> Forked from [cap153/bili-sync-yt-dlp](https://github.com/cap153/bili-sync-yt-dlp) with much unmergeable changes.
+BLSync 是一个同步 Bilibili 收藏夹的软件。
 
 ## 功能
 
@@ -67,16 +67,6 @@ ac_time_value = ""
 
 ![image](https://github.com/user-attachments/assets/270c7f2f-b1b1-49a1-a450-a133f0d459fa)
 
-
-# Q&A
-
-## Why not `bili-sync` ?
-
-尝试使用但是下载报错了。想要显示LOG，提示使用 RUST 自带的 LOG 参数但是我不会 Rust。
-
-## Why not `bili-sync-yt-dlp`?
-
-想要扩展更多功能。
 
 # 参考与借鉴
 

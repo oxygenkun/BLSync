@@ -99,12 +99,9 @@ async def lifespan(app: FastAPI):
     """
     启动Web服务前，启动后台任务
     """
-    try:
-        asyncio.create_task(start_background_tasks())
-        yield
-    finally:
-        await app.state.shutdown()
-        await app.state.cleanup()
+    tasks = asyncio.create_task(start_background_tasks())
+    yield
+    tasks.cancel()
 
 
 app = FastAPI(lifespan=lifespan)

@@ -1,12 +1,19 @@
 FROM python:3.12-alpine
 
+# install tools
+RUN apk update && apk add --no-cache ffmpeg
 RUN python -m pip install uv
 RUN uv tool install yutto
-RUN --mount=source=./,target=/app uv pip install --no-cache -r requirements.lock --system
+
+# copy files
+COPY pyproject.toml requirements.lock config.toml README.md src /app/
+
+# install dependencies and project
+WORKDIR /app
+# RUN uv pip install --no-cache -r requirements.lock --system
 RUN --mount=source=dist,target=/dist uv pip install --no-cache /dist/*.whl --system
 RUN uv cache clean
-WORKDIR /app
-COPY src config.toml /app/
-CMD [ "bs", "-c", "config.toml" ]
+
+CMD [ "bs", "-c", "/app/config/config.toml" ]
 
 EXPOSE 8000
