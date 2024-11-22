@@ -17,9 +17,27 @@
 
 # 使用
 
+## docker-compose 运行
+
+`compsoe.yaml` 模板
+
+```yaml
+services:
+  app:
+    image: oxygenkun1/blsync:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config
+      - ./sync:/app/sync
+```
+- `/app/config` ：[配置文件](./README.md#配置文件)所在目录，存储配置文件 `config.toml`
+- `/app/sync` ：默认存储位置
+
+
 ## 源码运行
 
-1. 安装 `rye`
+1. 安装 `rye` 包管理器
 
 2. 安装 `ffmpeg`, `yutto`
 
@@ -27,12 +45,12 @@
 
   ```bash
   rye sync
-  rye run bs
+  rye run bs -c config/config.toml
   ```
 
 # 配置文件
 
-当前版本的默认示例文件 `config.toml` 如下：
+当前版本的默认示例文件 `./config/config.toml` 如下：
 
 ```toml
 interval = 1200
@@ -47,16 +65,17 @@ dedeuserid = ""
 ac_time_value = ""
 
 [favorite_list]
-<收藏夹id> = "<保存的路径>"
+-1="sync/"
 <收藏夹id> = "<保存的路径>"
 ```
 
 - `interval` ：表示程序每次执行扫描下载的间隔时间，单位为秒。
 - `request_timeout` ：表示程序获取b站信息请求超时时间。一般不需要更改。
-- `credential` ：哔哩哔哩账号的身份凭据，请参考凭据获取[流程获取](https://nemo2011.github.io/bilibili-api/#/get-credential)并对应填写至配置文件中，后续 bili-sync 会在必要时自动刷新身份凭据，不再需要手动管理。推荐使用匿名窗口获取，避免潜在的冲突。
+- `data_path` ：程序运行数据保存的 sqlite 文件保存地址，避免重复下载。
+- **`credential`** ：哔哩哔哩账号的身份凭据，请参考凭据获取[流程获取](https://nemo2011.github.io/bilibili-api/#/get-credential)
   - `sessdata`,`bili_jct`,`buvid3`,`dedeuserid` ：cookies 存储
   - `ac_time_value` ：LocalStorage 存储
-- `favorite_list` ：你想要下载的收藏夹与想要保存的位置。简单示例：
+- `favorite_list` ：你想要下载的收藏夹fid与想要保存的位置。简单示例：
 
   ```bash
   3115878158 = "~/bili-sync/"
