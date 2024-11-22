@@ -4,7 +4,7 @@
 
 > 疯狂完善功能中……
 
-## 功能
+# 功能
 
 - [x] 支持收藏夹同步
 - [x] 支持外部 API 下载请求
@@ -19,7 +19,7 @@
 
 ## docker-compose 运行
 
-`compose.yaml` 模板
+1. 创建 `compose.yaml` 文件
 
 ```yaml
 services:
@@ -34,6 +34,11 @@ services:
 - `/app/config` ：[配置文件](./README.md#配置文件)所在目录，存储配置文件 `config.toml`；程序默认数据库存储位置
 - `/app/sync` ：默认收藏夹视频存储位置
 
+2. 运行 `docker-compose`
+
+```bash
+docker compose up -d
+```
 
 ## 源码运行
 
@@ -90,11 +95,12 @@ ac_time_value = ""
 ![image](https://github.com/user-attachments/assets/76c298d7-6437-4e12-8333-a80f4802b8d1)
 
 
-# 参考与借鉴
+# 特别感谢
 
 该项目实现过程中主要参考借鉴了如下的项目，感谢他们的贡献：
 
 - [bili-sync](https://github.com/amtoaer/bili-sync) 项目功能和配置文件参考
-- [bili-sync-yt-dlp](https://github.com/cap153/bili-sync-yt-dlp) 基础代码逻辑
+- [bili-sync-yt-dlp](https://github.com/cap153/bili-sync-yt-dlp) 基础代码逻辑参考
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) B 站的第三方接口文档
 - [bilibili-api](https://github.com/Nemo2011/bilibili-api) 使用 Python 调用接口的参考实现
+- [yutto](https://github.com/yutto-dev/yutto) 使用 yutto 下载视频
