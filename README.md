@@ -19,7 +19,7 @@
 
 ## docker-compose 运行
 
-`compsoe.yaml` 模板
+`compose.yaml` 模板
 
 ```yaml
 services:
@@ -31,8 +31,8 @@ services:
       - ./config:/app/config
       - ./sync:/app/sync
 ```
-- `/app/config` ：[配置文件](./README.md#配置文件)所在目录，存储配置文件 `config.toml`
-- `/app/sync` ：默认存储位置
+- `/app/config` ：[配置文件](./README.md#配置文件)所在目录，存储配置文件 `config.toml`；程序默认数据库存储位置
+- `/app/sync` ：默认收藏夹视频存储位置
 
 
 ## 源码运行
@@ -87,7 +87,7 @@ ac_time_value = ""
 
 浏览器可以看到 `fid=xxxx`，只需要后面数字即可
 
-![image](https://github.com/user-attachments/assets/270c7f2f-b1b1-49a1-a450-a133f0d459fa)
+![image](https://github.com/user-attachments/assets/76c298d7-6437-4e12-8333-a80f4802b8d1)
 
 
 # 参考与借鉴
