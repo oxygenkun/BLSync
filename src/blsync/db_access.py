@@ -1,5 +1,7 @@
 import sqlite3
 
+from .configs import Config
+
 
 class SQLiteManager:
     def __init__(self, db_name):
@@ -30,17 +32,17 @@ class SQLiteManager:
         return set(row[0] for row in self.cursor.fetchall())
 
 
-def already_download_bvids(media_id, configs):
+def already_download_bvids(media_id, configs: Config):
     """
     数据库读取已经下载的视频bvids
     """
-    with SQLiteManager(str(configs.data_file)) as db_manager:
+    with SQLiteManager(configs.data_path) as db_manager:
         return db_manager.get_values(table_name=media_id)
 
 
-def already_download_bvids_add(media_id, bvid, configs):
+def already_download_bvids_add(media_id, bvid, configs: Config):
     """
     数据库读取已经下载的视频bvids
     """
-    with SQLiteManager(str(configs.data_file)) as db_manager:
+    with SQLiteManager(configs.data_path) as db_manager:
         db_manager.insert_data(table_name=media_id, value=bvid)

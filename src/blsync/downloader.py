@@ -29,12 +29,15 @@ async def download_video(
     # ]
     # fmt: off
     command = [
+        'uvx',
         "yutto",
         "-c", configs.credential.sessdata,
         "-d", download_path,
         "--no-danmaku",
         "--no-subtitle",
         "--with-metadata",
+        "--no-color",
+        "--no-progress",
         video_url,
     ]
     # fmt: on
@@ -52,3 +55,5 @@ async def download_video(
     _, stderr = await proc.communicate()
     if stderr:
         print(f"[stderr]\n{stderr.decode()}")
+
+    print(f"end downloaded {bvid}")

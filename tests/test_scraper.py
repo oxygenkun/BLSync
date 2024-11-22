@@ -1,7 +1,7 @@
 import pytest
 
-from bili_sync_py.configs import load_configs, Config
-from bili_sync_py.scraper import BScraper
+from blsync.configs import load_configs, Config
+from blsync.scraper import BScraper
 
 
 @pytest.fixture

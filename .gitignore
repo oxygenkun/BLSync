@@ -1,5 +1,9 @@
 *.log
-.sqlite3
+*.sqlite3
 
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 .venv/
+.vscode/
+dist/
