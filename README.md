@@ -1,6 +1,8 @@
 # BLSync
 
-BLSync 是一个同步 Bilibili 收藏夹的软件。
+[BLSync](https://github.com/oxygenkun/BLSync) 是一个 Bilibili 收藏夹同步工具。
+
+> 疯狂完善功能中……
 
 ## 功能
 
@@ -19,7 +21,7 @@ BLSync 是一个同步 Bilibili 收藏夹的软件。
 
 1. 安装 `rye`
 
-2. 安装 `yutto`
+2. 安装 `ffmpeg`, `yutto`
 
 3. 使用 `rye` 运行
 
@@ -35,6 +37,7 @@ BLSync 是一个同步 Bilibili 收藏夹的软件。
 ```toml
 interval = 1200
 request_timeout = 300
+data_path = "config/"
 
 [credential]
 sessdata = ""
