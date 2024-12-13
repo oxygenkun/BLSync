@@ -60,9 +60,10 @@ class BScraper:
         # 获取视频信息
         info = dict()
         try:
-            info["title"] = (await v.get_info())["title"]
-            info["pages"] = len((await v.get_info())["pages"])
-            info["dynamic"] = (await v.get_info())["dynamic"]
+            v_raw = await v.get_info()
+            info["title"] = v_raw["title"]
+            info["pages"] = len(v_raw["pages"])
+            info["dynamic"] = v_raw["dynamic"]
         except Exception:
             # TODO
             # 失效的视频添加到已经下载集合
