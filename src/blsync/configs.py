@@ -6,7 +6,7 @@ import toml
 
 
 def parse_command_line_args(args=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="bili-sync")
+    parser = argparse.ArgumentParser(description="blsync: bili-sync")
     parser.add_argument(
         "-c",
         "--config",
@@ -69,9 +69,24 @@ def load_configs(args=None) -> Config:
         credential=ConfigCredential(
             sessdata=toml_config["credential"]["sessdata"],
             bili_jct=toml_config["credential"]["bili_jct"],
-            buvid3=toml_config["credential"]["buvid3"],
-            dedeuserid=toml_config["credential"]["dedeuserid"],
-            ac_time_value=toml_config["credential"]["ac_time_value"],
+            buvid3=(
+                toml_config["credential"]
+                if "buvid3" in toml_config["credential"]
+                and toml_config["credential"] != ""
+                else None
+            ),
+            dedeuserid=(
+                toml_config["credential"]["dedeuserid"]
+                if "dedeuserid" in toml_config["credential"]
+                and toml_config["credential"] != ""
+                else None
+            ),
+            ac_time_value=(
+                toml_config["credential"]["ac_time_value"]
+                if "ac_time_value" in toml_config["credential"]
+                and toml_config["credential"] != ""
+                else None
+            ),
         ),
         favorite_list=toml_config["favorite_list"],
     )
