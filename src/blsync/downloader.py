@@ -1,4 +1,7 @@
 import asyncio
+import pathlib
+
+import aiohttp
 
 
 async def download_video(
@@ -37,10 +40,24 @@ async def download_video(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     while not proc.stdout.at_eof():
-        line = await proc.stdout.readline()
-        print(line.decode().strip())
-    _, stderr = await proc.communicate()
-    if stderr:
-        print(f"[stderr]\n{stderr.decode()}")
+        if line := await proc.stdout.readline():
+            print(line.decode().strip())
+        if err := await proc.stderr.readline():
+            print(err.decode().strip())
+    # _, stderr = await proc.communicate()
+    # if stderr:
+    #     print(f"[stderr]\n{stderr.decode()}")
 
     print(f"end downloaded {bvid}")
+    return True
+
+
+async def download_file(url, download_path: pathlib.Path):
+    """
+    下载文件
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            download_path.write_bytes(await resp.read())
+    print(f"Downloaded {url} to {download_path}")
+    return True
