@@ -1,6 +1,7 @@
-from .configs import Config
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
+
+from .configs import Config
 
 
 class BScraper:
@@ -45,6 +46,11 @@ class BScraper:
                     continue
                 yield bvid, favid
 
+    # async def get_video_info(self, bvid):
+    #     v = video.Video(bvid=bvid, credential=self.credential)
+    #     v_raw = await v.get_info()
+    #     return v_raw
+
     async def get_video_info(self, bvid):
         """
         获取视频信息。
@@ -57,17 +63,15 @@ class BScraper:
         """
         # 实例化 Video 类，用于获取指定视频信息
         v = video.Video(bvid=bvid, credential=self.credential)
-        # 获取视频信息
-        info = dict()
         try:
             v_raw = await v.get_info()
-            info["title"] = v_raw["title"]
-            info["pages"] = len(v_raw["pages"])
-            info["dynamic"] = v_raw["dynamic"]
+            # info["title"] = v_raw["title"]
+            # info["pages"] = len(v_raw["pages"])
+            # info["dynamic"] = v_raw["dynamic"]
         except Exception:
             # TODO
             # 失效的视频添加到已经下载集合
             # already_download_bvids_add(media_id=media_id, bvid=bvid)
             logger.warning(bvid + "视频失效")
             return None
-        return info
+        return v_raw

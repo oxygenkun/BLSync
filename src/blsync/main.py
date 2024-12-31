@@ -9,11 +9,12 @@ from pydantic import BaseModel
 
 from .configs import Config, load_configs
 from .db_access import already_download_bvids, already_download_bvids_add
-from .downloader import download_video
+from .downloader import download_file, download_video
 from .scraper import BScraper
 
 task_queue = asyncio.Queue()
 configs = load_configs()
+bs = BScraper(configs)
 
 
 @dataclasses.dataclass
@@ -43,21 +44,30 @@ async def task_consumer():
             break
 
         if isinstance(task_context, BiliVideoTaskContext):
-            if task_context.bid in already_download_bvids(
+            bid = task_context.bid
+            if bid in already_download_bvids(
                 media_id=task_context.favid, configs=configs
             ):
-                print(f"Already downloaded {task_context.bid}")
+                print(f"Already downloaded {bid}")
             else:
                 fav_download_path = pathlib.Path(
                     configs.favorite_list[task_context.favid]
                 )
-                await download_video(
-                    bvid=task_context.bid,
-                    download_path=fav_download_path,
-                    configs=task_context.config,
+
+                v_info = await bs.get_video_info(bid)
+                cover_path = pathlib.Path(fav_download_path, f"{ v_info['pic']}.jpg")
+
+                await asyncio.gather(
+                    download_video(
+                        bvid=bid,
+                        download_path=fav_download_path,
+                        configs=task_context.config,
+                    ),
+                    download_file(v_info["pic"], cover_path),
                 )
+
                 already_download_bvids_add(
-                    media_id=task_context.favid, bvid=task_context.bid, configs=configs
+                    media_id=task_context.favid, bvid=bid, configs=configs
                 )
 
         task_queue.task_done()
@@ -68,7 +78,6 @@ async def task_producer():
     """
     定时获取
     """
-    bs = BScraper(configs)
     while True:
         async for bvid, favid in bs.get_all_bvids():
             await task_queue.put(
@@ -123,4 +132,5 @@ def start_server():
 
 
 if __name__ == "__main__":
-    start_server()
+    # start_server()
+    asyncio.run(start_background_tasks())
