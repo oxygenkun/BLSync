@@ -11,7 +11,7 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
         "-c",
         "--config",
         type=pathlib.Path,
-        # default="./config.toml",
+        default="./config.toml",
         help="Path to the configuration file",
     )
 
@@ -55,7 +55,7 @@ def load_configs(args=None) -> Config:
     args = parse_command_line_args(args)
     toml_config = toml.load(args.config)
     config = Config(
-        config_file=args.config if args.config else pathlib.Path("./config.toml"),
+        config_file=args.config,
         data_path=pathlib.Path(
             (
                 args.data
