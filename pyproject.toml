@@ -4,13 +4,13 @@ version = "0.1.2"
 description = "BLSync is for syncing your bilibili favorite list to local."
 dependencies = [
     "toml>=0.10.2",
-    "bilibili-api-python>=16.3.0",
+    "bilibili-api-python>=17.1.4",
     "fastapi>=0.115.5",
     "uvicorn>=0.32.0",
     "loguru>=0.7.2",
 ]
 readme = "README.md"
-requires-python = ">= 3.11"
+requires-python = ">= 3.12"
 
 [project.scripts]
 bs = 'blsync.main:start_server'
@@ -19,7 +19,7 @@ bs = 'blsync.main:start_server'
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.rye]
+[tool.uv]
 managed = true
 dev-dependencies = ["ruff>=0.7.3", "pytest>=8.3.3", "pytest-asyncio>=0.24.0"]
 
