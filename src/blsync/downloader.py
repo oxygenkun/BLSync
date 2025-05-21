@@ -39,11 +39,17 @@ async def download_video(
     proc = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    while not proc.stdout.at_eof():
-        if line := await proc.stdout.readline():
-            print(line.decode().strip())
-        if err := await proc.stderr.readline():
-            print(err.decode().strip())
+
+    if configs.verbose:
+        while not proc.stdout.at_eof():
+            if line := await proc.stdout.readline():
+                print(line.decode().strip())
+            if err := await proc.stderr.readline():
+                print(err.decode().strip())
+    else:
+        _, stderr = await proc.communicate()
+        if stderr:
+            print(f"[stderr]\n{stderr.decode()}")
     # _, stderr = await proc.communicate()
     # if stderr:
     #     print(f"[stderr]\n{stderr.decode()}")
