@@ -23,6 +23,13 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
         help="Path to the data file",
     )
 
+    parser.add_argument(
+        "--verbose",
+        type=bool,
+        default=False,
+        help="Show verbose output",
+    )
+
     return parser.parse_args(args)
 
 
@@ -39,6 +46,8 @@ class ConfigCredential:
 class Config:
     config_file: pathlib.Path
     data_path: pathlib.Path
+
+    verbose: bool
 
     interval: int
     request_timeout: int
@@ -64,6 +73,7 @@ def load_configs(args=None) -> Config:
             ),
             "data.sqlite3",
         ),
+        verbose=args.verbose,
         interval=toml_config["interval"],
         request_timeout=toml_config["request_timeout"],
         credential=ConfigCredential(
