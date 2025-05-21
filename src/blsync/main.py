@@ -7,13 +7,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .configs import Config, load_configs
+from . import global_configs
+from .configs import Config
 from .db_access import already_download_bvids, already_download_bvids_add
 from .downloader import download_video
 from .scraper import BScraper
 
 task_queue = asyncio.Queue()
-configs = load_configs()
 
 
 @dataclasses.dataclass
@@ -44,12 +44,12 @@ async def task_consumer():
 
         if isinstance(task_context, BiliVideoTaskContext):
             if task_context.bid in already_download_bvids(
-                media_id=task_context.favid, configs=configs
+                media_id=task_context.favid, configs=global_configs
             ):
                 print(f"Already downloaded {task_context.bid}")
             else:
                 fav_download_path = pathlib.Path(
-                    configs.favorite_list[task_context.favid]
+                    global_configs.favorite_list[task_context.favid]
                 )
                 await download_video(
                     bvid=task_context.bid,
@@ -57,7 +57,9 @@ async def task_consumer():
                     configs=task_context.config,
                 )
                 already_download_bvids_add(
-                    media_id=task_context.favid, bvid=task_context.bid, configs=configs
+                    media_id=task_context.favid,
+                    bvid=task_context.bid,
+                    configs=global_configs,
                 )
 
         task_queue.task_done()
@@ -68,16 +70,16 @@ async def task_producer():
     """
     定时获取
     """
-    bs = BScraper(configs)
+    bs = BScraper(global_configs)
     while True:
         async for bvid, favid in bs.get_all_bvids():
             await task_queue.put(
-                BiliVideoTaskContext(config=configs, bid=bvid, favid=favid)
+                BiliVideoTaskContext(config=global_configs, bid=bvid, favid=favid)
             )
             print(f"[generator] queue has {task_queue.qsize()} tasks")
 
-        print(f"[generator] Sleeping for a while: {configs.interval} seconds")
-        await asyncio.sleep(configs.interval)
+        print(f"[generator] Sleeping for a while: {global_configs.interval} seconds")
+        await asyncio.sleep(global_configs.interval)
 
 
 async def start_background_tasks():
@@ -111,7 +113,7 @@ app = FastAPI(lifespan=lifespan)
 async def create_task(task: TaskRequest):
     try:
         await task_queue.put(
-            BiliVideoTaskContext(config=configs, bid=task.bid, favid=task.favid)
+            BiliVideoTaskContext(config=global_configs, bid=task.bid, favid=task.favid)
         )
         return {"status": "success"}
     except Exception as e:
