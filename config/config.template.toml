@@ -12,5 +12,6 @@ ac_time_value = ""
 
 [favorite_list]
 # 键值对存储，key是收藏夹id，value是下载存储路径
+# fid为-1表示非收藏夹 
 # fid = "<download_path>"
 -1="sync/"
