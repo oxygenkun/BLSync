@@ -42,15 +42,15 @@ docker compose up -d
 
 ## 源码运行
 
-1. 安装 `rye` 包管理器
+1. 安装 `uv` 包管理器
 
 2. 安装 `ffmpeg`, `yutto`
 
-3. 使用 `rye` 运行
+3. 使用 `uv` 运行
 
   ```bash
-  rye sync
-  rye run bs -c config/config.toml
+  uv sync
+  uv run bs -c config/config.toml
   ```
 
 # 配置文件
