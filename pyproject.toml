@@ -2,6 +2,28 @@
 name = "BLSync"
 version = "0.1.2"
 description = "BLSync is for syncing your bilibili favorite list to local."
+authors = [
+    {name = "oxygenkun", email = "oxygenkun.1@gmail.com"}
+]
+maintainers = [
+    {name = "oxygenkun", email = "oxygenkun.1@gmail.com"}
+]
+license = {text = "MIT"}
+keywords = ["bilibili", "download", "sync", "video", "api"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: Utilities",
+]
 dependencies = [
     "toml>=0.10.2",
     "bilibili-api-python>=17.1.4",
@@ -14,8 +36,22 @@ dependencies = [
 readme = "README.md"
 requires-python = ">= 3.12"
 
+[project.urls]
+Homepage = "https://github.com/oxygenkun/BLSync"
+Repository = "https://github.com/oxygenkun/BLSync"
+Documentation = "https://github.com/oxygenkun/BLSync#readme"
+Issues = "https://github.com/oxygenkun/BLSync/issues"
+Changelog = "https://github.com/oxygenkun/BLSync/releases"
+
 [project.scripts]
 bs = 'blsync.main:start_server'
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7.3",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+]
 
 [build-system]
 requires = ["hatchling"]
