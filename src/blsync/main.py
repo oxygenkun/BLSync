@@ -12,10 +12,13 @@ from . import global_configs
 from .configs import Config
 from .db_access import already_download_bvids, already_download_bvids_add
 from .downloader import download_file, download_video
+from .postprocessor import PostProcessor
 from .scraper import BScraper
 
 task_queue = asyncio.Queue()
 bs = BScraper(global_configs)
+post_processor = PostProcessor(global_configs)
+
 
 @dataclasses.dataclass
 class TaskContext:
@@ -50,11 +53,23 @@ async def task_consumer():
             ):
                 print(f"Already downloaded {bid}")
             else:
-                fav_download_path = pathlib.Path(
-                    global_configs.favorite_list[task_context.favid]
-                )
+                # 获取下载路径，支持简单和复杂配置格式
+                fav_config = global_configs.favorite_list[task_context.favid]
+                if isinstance(fav_config, str):
+                    # 简单格式: fid = "path"
+                    fav_download_path = pathlib.Path(fav_config)
+                elif isinstance(fav_config, dict):
+                    # 复杂格式: 包含path字段
+                    fav_download_path = pathlib.Path(fav_config.get("path", ""))
+                else:
+                    print(f"Invalid favorite_list config for {task_context.favid}")
+                    continue
 
                 v_info = await bs.get_video_info(bid)
+                if v_info is None:
+                    print(f"Failed to get video info for {bid}")
+                    continue
+
                 cover_path = pathlib.Path(
                     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
                 )
@@ -73,6 +88,18 @@ async def task_consumer():
                     bvid=bid,
                     configs=global_configs,
                 )
+
+                # 执行下载后处理
+                postprocess_actions = post_processor.get_postprocess_actions(
+                    task_context.favid
+                )
+                if postprocess_actions:
+                    print(
+                        f"Executing postprocess actions for {bid}: {postprocess_actions}"
+                    )
+                    await post_processor.execute_postprocess_actions(
+                        bid, task_context.favid, postprocess_actions
+                    )
 
         task_queue.task_done()
         print(f"[task_executor] queue has {task_queue.qsize()} tasks")

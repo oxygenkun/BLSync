@@ -38,13 +38,22 @@ class BScraper:
             yield None
 
     async def get_all_bvids(self):
-        for favid in self.config.favorite_list.keys():
+        for favid, config in self.config.favorite_list.items():
+            # 跳过非收藏夹和复杂配置中的非收藏夹
             if int(favid) < 0:
                 continue
-            async for bvid in self._get_bvids_from_favid(favid):
+                
+            # 如果是复杂配置格式，需要从dict中获取实际的fid
+            actual_favid = favid
+            if isinstance(config, dict) and "fid" in config:
+                actual_favid = str(config["fid"])
+                if int(actual_favid) < 0:
+                    continue
+                    
+            async for bvid in self._get_bvids_from_favid(actual_favid):
                 if not bvid:
                     continue
-                yield bvid, favid
+                yield bvid, actual_favid
 
     # async def get_video_info(self, bvid):
     #     v = video.Video(bvid=bvid, credential=self.credential)
