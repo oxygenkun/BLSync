@@ -8,6 +8,8 @@ dependencies = [
     "fastapi>=0.115.5",
     "uvicorn>=0.32.0",
     "loguru>=0.7.2",
+    "aiohttp>=3.11.18",
+    "yutto>=2.0.3",
 ]
 readme = "README.md"
 requires-python = ">= 3.12"
@@ -30,4 +32,4 @@ allow-direct-references = true
 packages = ["src/blsync"]
 
 [tool.ruff]
-lint.extend-select=["I"]
+lint.extend-select = ["I"]
