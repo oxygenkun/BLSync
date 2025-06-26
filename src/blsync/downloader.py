@@ -10,6 +10,7 @@ async def download_video(
     download_path,
     configs=None,
     extra_list_options=None,
+    is_batch=False,
 ):
     """
     使用 yutto 下载视频。
@@ -17,26 +18,33 @@ async def download_video(
     :param media_id: 收藏夹的id
     :param bvid: 视频的bvid
     :param download_path: 存放视频的文件夹路径
+    :param is_batch: 是否为多分P视频，若为True则添加--batch参数
     """
     video_url = f"https://www.bilibili.com/video/{bvid}"
     # fmt: off
     command = [
         "yutto",
         "-c", configs.credential.sessdata,
-        "-d", download_path,
+        "-d", str(download_path),
         "--no-danmaku",
         "--no-subtitle",
         "--with-metadata",
-        # "--save-cover",
+        "--save-cover",
         "--no-color",
         "--no-progress",
         video_url,
     ]
     # fmt: on
+
+    # 如果是多分P视频，添加--batch参数
+    if is_batch:
+        command.insert(-1, "--batch")
+        logger.info(f"Added --batch parameter for multi-part video {bvid}")
+
     if extra_list_options:
         command.extend(extra_list_options)
 
-    logger.info(f"start downloading {bvid}")
+    logger.info(f"start downloading {bvid} with command: {' '.join(command)}")
 
     proc = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE

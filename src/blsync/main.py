@@ -63,13 +63,22 @@ async def task_consumer():
                     # 复杂格式: 包含path字段
                     fav_download_path = pathlib.Path(fav_config.get("path", ""))
                 else:
-                    logger.info(f"Invalid favorite_list config for {task_context.favid}")
+                    logger.info(
+                        f"Invalid favorite_list config for {task_context.favid}"
+                    )
                     continue
 
                 v_info = await bs.get_video_info(bid)
                 if v_info is None:
                     logger.info(f"Failed to get video info for {bid}")
                     continue
+
+                # 检查是否为多分P视频
+                is_batch = v_info.get("videos", 1) > 1
+                if is_batch:
+                    logger.info(
+                        f"Video {bid} has {v_info['videos']} parts, using batch mode"
+                    )
 
                 cover_path = pathlib.Path(
                     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
@@ -80,6 +89,7 @@ async def task_consumer():
                         bvid=bid,
                         download_path=fav_download_path,
                         configs=task_context.config,
+                        is_batch=is_batch,
                     ),
                     download_file(v_info["pic"], cover_path),
                 )
@@ -90,17 +100,17 @@ async def task_consumer():
                     configs=global_configs,
                 )
 
-                # 执行下载后处理
-                postprocess_actions = post_processor.get_postprocess_actions(
-                    task_context.favid
+            # 执行下载后处理
+            postprocess_actions = post_processor.get_postprocess_actions(
+                task_context.favid
+            )
+            if postprocess_actions:
+                logger.info(
+                    f"Executing postprocess actions for {bid}: {postprocess_actions}"
                 )
-                if postprocess_actions:
-                    logger.info(
-                        f"Executing postprocess actions for {bid}: {postprocess_actions}"
-                    )
-                    await post_processor.execute_postprocess_actions(
-                        bid, task_context.favid, postprocess_actions
-                    )
+                await post_processor.execute_postprocess_actions(
+                    bid, task_context.favid, postprocess_actions
+                )
 
         task_queue.task_done()
         logger.info(f"[task_executor] queue has {task_queue.qsize()} tasks")
@@ -118,7 +128,9 @@ async def task_producer():
             )
             logger.info(f"[generator] queue has {task_queue.qsize()} tasks")
 
-        logger.info(f"[generator] Sleeping for a while: {global_configs.interval} seconds")
+        logger.info(
+            f"[generator] Sleeping for a while: {global_configs.interval} seconds"
+        )
         await asyncio.sleep(global_configs.interval)
 
 
