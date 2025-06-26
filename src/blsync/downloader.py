@@ -2,6 +2,7 @@ import asyncio
 import pathlib
 
 import aiohttp
+from loguru import logger
 
 
 async def download_video(
@@ -26,7 +27,7 @@ async def download_video(
         "--no-danmaku",
         "--no-subtitle",
         "--with-metadata",
-        "--save-cover",
+        # "--save-cover",
         "--no-color",
         "--no-progress",
         video_url,
@@ -35,7 +36,7 @@ async def download_video(
     if extra_list_options:
         command.extend(extra_list_options)
 
-    print(f"start downloading {bvid}")
+    logger.info(f"start downloading {bvid}")
 
     proc = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -44,18 +45,18 @@ async def download_video(
     if configs.verbose:
         while not proc.stdout.at_eof():
             if line := await proc.stdout.readline():
-                print(line.decode().strip())
+                logger.info(line.decode().strip())
             if err := await proc.stderr.readline():
-                print(err.decode().strip())
+                logger.info(err.decode().strip())
     else:
         _, stderr = await proc.communicate()
         if stderr:
-            print(f"[stderr]\n{stderr.decode()}")
+            logger.info(f"[stderr]\n{stderr.decode()}")
     # _, stderr = await proc.communicate()
     # if stderr:
     #     print(f"[stderr]\n{stderr.decode()}")
 
-    print(f"end downloaded {bvid}")
+    logger.info(f"end downloaded {bvid}")
     return True
 
 
@@ -66,5 +67,5 @@ async def download_file(url, download_path: pathlib.Path):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             download_path.write_bytes(await resp.read())
-    print(f"Downloaded {url} to {download_path}")
+    logger.info(f"Downloaded {url} to {download_path}")
     return True
