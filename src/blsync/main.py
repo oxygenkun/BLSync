@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from yutto.processor.path_resolver import repair_filename
 
 from . import global_configs
 from .configs import Config
@@ -54,7 +55,9 @@ async def task_consumer():
                 )
 
                 v_info = await bs.get_video_info(bid)
-                cover_path = pathlib.Path(fav_download_path, f"{ v_info['pic']}.jpg")
+                cover_path = pathlib.Path(
+                    fav_download_path, repair_filename(f"{v_info['title']}.jpg")
+                )
 
                 await asyncio.gather(
                     download_video(
