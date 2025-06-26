@@ -121,9 +121,11 @@ async def task_producer():
     定时获取
     """
     bs = BScraper(global_configs)
+    bs = BScraper(global_configs)
     while True:
         async for bvid, favid in bs.get_all_bvids():
             await task_queue.put(
+                BiliVideoTaskContext(config=global_configs, bid=bvid, favid=favid)
                 BiliVideoTaskContext(config=global_configs, bid=bvid, favid=favid)
             )
             logger.info(f"[generator] queue has {task_queue.qsize()} tasks")
@@ -165,6 +167,7 @@ app = FastAPI(lifespan=lifespan)
 async def create_task(task: TaskRequest):
     try:
         await task_queue.put(
+            BiliVideoTaskContext(config=global_configs, bid=task.bid, favid=task.favid)
             BiliVideoTaskContext(config=global_configs, bid=task.bid, favid=task.favid)
         )
         return {"status": "success"}
