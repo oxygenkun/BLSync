@@ -11,7 +11,7 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
         "-c",
         "--config",
         type=pathlib.Path,
-        default="./config.toml",
+        default="./config/config.toml",
         help="Path to the configuration file",
     )
 
