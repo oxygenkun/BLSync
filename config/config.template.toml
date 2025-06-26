@@ -5,9 +5,9 @@ data_path = "config/"
 [credential]
 sessdata = ""
 bili_jct = ""
-buvid3 = ""
-dedeuserid = ""
-ac_time_value = ""
+# buvid3 = ""
+# dedeuserid = ""
+# ac_time_value = ""
 
 
 [favorite_list]
@@ -15,3 +15,22 @@ ac_time_value = ""
 # fid为-1表示非收藏夹 
 # fid = "<download_path>"
 -1="sync/"
+
+# 下载后处理配置示例
+# 支持的操作：move (移动到其他收藏夹), remove (从收藏夹移除)
+
+# # 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
+# [favorite_list.task1]
+# fid = 123
+# path = "temp_downloads/"
+# postprocess = [
+#     { action = "move", fid = 345 }
+# ]
+
+# # 示例2: 移除操作 - 下载后从收藏夹456移除视频
+# [favorite_list.task2] 
+# fid = 456
+# path = "downloads/"
+# postprocess = [
+#     { action = "remove" }
+# ]

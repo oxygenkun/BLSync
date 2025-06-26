@@ -5,15 +5,20 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from loguru import logger
 from pydantic import BaseModel
+from yutto.processor.path_resolver import repair_filename
 
 from . import global_configs
 from .configs import Config
 from .db_access import already_download_bvids, already_download_bvids_add
-from .downloader import download_video
+from .downloader import download_file, download_video
+from .postprocessor import PostProcessor
 from .scraper import BScraper
 
 task_queue = asyncio.Queue()
+bs = BScraper(global_configs)
+post_processor = PostProcessor(global_configs)
 
 
 @dataclasses.dataclass
@@ -43,27 +48,72 @@ async def task_consumer():
             break
 
         if isinstance(task_context, BiliVideoTaskContext):
-            if task_context.bid in already_download_bvids(
+            bid = task_context.bid
+            if bid in already_download_bvids(
                 media_id=task_context.favid, configs=global_configs
             ):
-                print(f"Already downloaded {task_context.bid}")
+                logger.info(f"Already downloaded {bid}")
             else:
-                fav_download_path = pathlib.Path(
-                    global_configs.favorite_list[task_context.favid]
+                # 获取下载路径，支持简单和复杂配置格式
+                fav_config = global_configs.favorite_list[task_context.favid]
+                if isinstance(fav_config, str):
+                    # 简单格式: fid = "path"
+                    fav_download_path = pathlib.Path(fav_config)
+                elif isinstance(fav_config, dict):
+                    # 复杂格式: 包含path字段
+                    fav_download_path = pathlib.Path(fav_config.get("path", ""))
+                else:
+                    logger.info(
+                        f"Invalid favorite_list config for {task_context.favid}"
+                    )
+                    continue
+
+                v_info = await bs.get_video_info(bid)
+                if v_info is None:
+                    logger.info(f"Failed to get video info for {bid}")
+                    continue
+
+                # 检查是否为多分P视频
+                is_batch = v_info.get("videos", 1) > 1
+                if is_batch:
+                    logger.info(
+                        f"Video {bid} has {v_info['videos']} parts, using batch mode"
+                    )
+
+                cover_path = pathlib.Path(
+                    fav_download_path, repair_filename(f"{v_info['title']}.jpg")
                 )
-                await download_video(
-                    bvid=task_context.bid,
-                    download_path=fav_download_path,
-                    configs=task_context.config,
+
+                await asyncio.gather(
+                    download_video(
+                        bvid=bid,
+                        download_path=fav_download_path,
+                        configs=task_context.config,
+                        is_batch=is_batch,
+                    ),
+                    download_file(v_info["pic"], cover_path),
                 )
+
                 already_download_bvids_add(
                     media_id=task_context.favid,
-                    bvid=task_context.bid,
+                    bvid=bid,
                     configs=global_configs,
                 )
 
+            # 执行下载后处理
+            postprocess_actions = post_processor.get_postprocess_actions(
+                task_context.favid
+            )
+            if postprocess_actions:
+                logger.info(
+                    f"Executing postprocess actions for {bid}: {postprocess_actions}"
+                )
+                await post_processor.execute_postprocess_actions(
+                    bid, task_context.favid, postprocess_actions
+                )
+
         task_queue.task_done()
-        print(f"[task_executor] queue has {task_queue.qsize()} tasks")
+        logger.info(f"[task_executor] queue has {task_queue.qsize()} tasks")
 
 
 async def task_producer():
@@ -76,9 +126,11 @@ async def task_producer():
             await task_queue.put(
                 BiliVideoTaskContext(config=global_configs, bid=bvid, favid=favid)
             )
-            print(f"[generator] queue has {task_queue.qsize()} tasks")
+            logger.info(f"[generator] queue has {task_queue.qsize()} tasks")
 
-        print(f"[generator] Sleeping for a while: {global_configs.interval} seconds")
+        logger.info(
+            f"[generator] Sleeping for a while: {global_configs.interval} seconds"
+        )
         await asyncio.sleep(global_configs.interval)
 
 
@@ -125,4 +177,5 @@ def start_server():
 
 
 if __name__ == "__main__":
-    start_server()
+    # start_server()
+    asyncio.run(start_background_tasks())

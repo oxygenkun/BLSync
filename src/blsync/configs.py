@@ -6,12 +6,12 @@ import toml
 
 
 def parse_command_line_args(args=None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="bili-sync")
+    parser = argparse.ArgumentParser(description="blsync: bili-sync")
     parser.add_argument(
         "-c",
         "--config",
         type=pathlib.Path,
-        # default="./config.toml",
+        default="./config/config.toml",
         help="Path to the configuration file",
     )
 
@@ -25,8 +25,7 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
 
     parser.add_argument(
         "--verbose",
-        type=bool,
-        default=False,
+        action="store_true",
         help="Show verbose output",
     )
 
@@ -63,8 +62,26 @@ def load_configs(args=None) -> Config:
     # TODO: 命令行参数覆盖配置文件
     args = parse_command_line_args(args)
     toml_config = toml.load(args.config)
+
+    # 处理favorite_list配置，支持复杂配置格式
+    favorite_list = {}
+    if "favorite_list" in toml_config:
+        for key, value in toml_config["favorite_list"].items():
+            if isinstance(value, str):
+                # 简单格式: fid = "path"
+                favorite_list[key] = value
+            elif isinstance(value, dict):
+                # 复杂格式: [favorite_list.taskname] with fid, path, postprocess
+                if "fid" in value:
+                    # 这是一个任务配置，需要将其映射到对应的fid
+                    fid = str(value["fid"])
+                    favorite_list[fid] = value
+                else:
+                    # 保持原格式
+                    favorite_list[key] = value
+
     config = Config(
-        config_file=args.config if args.config else pathlib.Path("./config.toml"),
+        config_file=args.config,
         data_path=pathlib.Path(
             (
                 args.data
@@ -79,11 +96,26 @@ def load_configs(args=None) -> Config:
         credential=ConfigCredential(
             sessdata=toml_config["credential"]["sessdata"],
             bili_jct=toml_config["credential"]["bili_jct"],
-            buvid3=toml_config["credential"]["buvid3"],
-            dedeuserid=toml_config["credential"]["dedeuserid"],
-            ac_time_value=toml_config["credential"]["ac_time_value"],
+            buvid3=(
+                toml_config["credential"]["buvid3"]
+                if "buvid3" in toml_config["credential"]
+                and toml_config["credential"]["buvid3"] != ""
+                else None
+            ),
+            dedeuserid=(
+                toml_config["credential"]["dedeuserid"]
+                if "dedeuserid" in toml_config["credential"]
+                and toml_config["credential"]["dedeuserid"] != ""
+                else None
+            ),
+            ac_time_value=(
+                toml_config["credential"]["ac_time_value"]
+                if "ac_time_value" in toml_config["credential"]
+                and toml_config["credential"]["ac_time_value"] != ""
+                else None
+            ),
         ),
-        favorite_list=toml_config["favorite_list"],
+        favorite_list=favorite_list,
     )
 
     if not config.data_path.parent.exists():
