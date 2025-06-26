@@ -26,6 +26,7 @@ async def download_video(
         "--no-danmaku",
         "--no-subtitle",
         "--with-metadata",
+        "--save-cover",
         "--no-color",
         "--no-progress",
         video_url,
