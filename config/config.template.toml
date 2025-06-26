@@ -5,9 +5,9 @@ data_path = "config/"
 [credential]
 sessdata = ""
 bili_jct = ""
-buvid3 = ""
-dedeuserid = ""
-ac_time_value = ""
+# buvid3 = ""
+# dedeuserid = ""
+# ac_time_value = ""
 
 
 [favorite_list]
