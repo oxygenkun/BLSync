@@ -47,7 +47,7 @@ class BScraper:
             actual_favid = favid
             if isinstance(config, dict) and "fid" in config:
                 actual_favid = str(config["fid"])
-                if int(actual_favid) < 0:
+                if not favid.isdigit() or (favid.isdigit() and int(actual_favid)) < 0:
                     continue
 
             async for bvid in self._get_bvids_from_favid(actual_favid):
