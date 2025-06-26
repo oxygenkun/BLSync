@@ -25,8 +25,7 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
 
     parser.add_argument(
         "--verbose",
-        type=bool,
-        default=False,
+        action="store_true",
         help="Show verbose output",
     )
 
