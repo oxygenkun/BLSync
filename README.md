@@ -17,28 +17,55 @@
 
 # 使用
 
-## docker-compose 运行
+## Docker Compose 运行（推荐）
 
-1. 创建 `compose.yaml` 文件
+1. 创建目录结构
+
+```bash
+mkdir blsync
+cd blsync
+mkdir config sync
+```
+
+2. 创建 `compose.yaml` 文件
 
 ```yaml
 services:
-  app:
+  blsync:
     image: oxygenkun1/blsync:latest
+    container_name: blsync
     ports:
       - "8000:8000"
     volumes:
       - ./config:/app/config
       - ./sync:/app/sync
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
 ```
-- `/app/config` ：[配置文件](./README.md#配置文件)所在目录，存储配置文件 `config.toml`；程序默认数据库存储位置
-- `/app/sync` ：默认收藏夹视频存储位置
 
-2. 运行 `docker-compose`
+3. 创建配置文件 `./config/config.toml`（参考[配置文件](#配置文件)章节）
+
+4. 启动服务
 
 ```bash
+# 启动服务（后台运行）
 docker compose up -d
+
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 停止服务
+docker compose down
 ```
+
+### 目录说明
+
+- `/app/config` ：[配置文件](#配置文件)所在目录，存储配置文件 `config.toml`；程序默认数据库存储位置
+- `/app/sync` ：默认收藏夹视频存储位置
 
 ## 源码运行
 
@@ -48,43 +75,14 @@ docker compose up -d
 
 3. 使用 `uv` 运行
 
-  ```bash
-  uv sync
-  uv run bs -c config/config.toml
-  ```
+```bash
+uv sync
+uv run bs -c config/config.toml
+```
 
 # 配置文件
 
-当前版本的默认示例文件 `./config/config.toml` 如下：
-
-```toml
-interval = 1200
-request_timeout = 300
-data_path = "config/"
-
-[credential]
-sessdata = ""
-bili_jct = ""
-buvid3 = ""
-dedeuserid = ""
-ac_time_value = ""
-
-[favorite_list]
--1="sync/"
-<收藏夹id> = "<保存的路径>"
-```
-
-- `interval` ：表示程序每次执行扫描下载的间隔时间，单位为秒。
-- `request_timeout` ：表示程序获取b站信息请求超时时间。一般不需要更改。
-- `data_path` ：程序运行数据保存的 sqlite 文件保存地址，避免重复下载。
-- **`credential`** ：哔哩哔哩账号的身份凭据，请参考凭据获取[流程获取](https://nemo2011.github.io/bilibili-api/#/get-credential)
-  - `sessdata`,`bili_jct`,`buvid3`,`dedeuserid` ：cookies 存储
-  - `ac_time_value` ：LocalStorage 存储
-- `favorite_list` ：你想要下载的收藏夹fid与想要保存的位置。简单示例：
-
-  ```bash
-  3115878158 = "~/bili-sync/"
-  ```
+默认读取 `./config/config.toml` （参考模板文件 [`./config/config.template.toml`](./config/config.template.toml) 中的说明）。
 
 ## 收藏夹 id 获取方法
 
@@ -93,7 +91,6 @@ ac_time_value = ""
 浏览器可以看到 `fid=xxxx`，只需要后面数字即可
 
 ![image](https://github.com/user-attachments/assets/76c298d7-6437-4e12-8333-a80f4802b8d1)
-
 
 # 特别感谢
 

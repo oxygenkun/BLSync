@@ -1,36 +1,40 @@
-interval = 1200
-request_timeout = 300
-data_path = "config/"
+interval = 1200       # 表示程序每次执行扫描下载的间隔时间，单位为秒。
+request_timeout = 300 # 表示程序获取b站信息请求超时时间。一般不需要更改。
+data_path = "config/" # 程序运行数据保存的 sqlite 文件保存地址，避免重复下载。
 
 [credential]
-sessdata = ""
-bili_jct = ""
+# 哔哩哔哩账号的身份凭据，请参考凭据获取[流程获取](https://nemo2011.github.io/bilibili-api/#/get-credential)
+sessdata = "" # **必填项**
+bili_jct = "" # **必填项**
 # buvid3 = ""
 # dedeuserid = ""
 # ac_time_value = ""
 
 
 [favorite_list]
-# 键值对存储，key是收藏夹id，value是下载存储路径
-# fid为-1表示非收藏夹 
-# fid = "<download_path>"
--1="sync/"
+# # 收藏夹同步
 
+# ## 简单模式
+# 处理简单的收藏夹下载任务
+# 键值对存储，key是收藏夹id，value是下载存储路径
+# fid为-1表示非收藏夹来源（通过API获取的收藏夹视频）
+# fid = "<download_path>"
+
+-1 = "sync/"
+
+# ## 复杂模式
+# 支持设置任务名，可以在下载后进行一些操作
 # 下载后处理配置示例
 # 支持的操作：move (移动到其他收藏夹), remove (从收藏夹移除)
 
-# # 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
-# [favorite_list.task1]
-# fid = 123
-# path = "temp_downloads/"
-# postprocess = [
-#     { action = "move", fid = 345 }
-# ]
+# ### 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
+[favorite_list.task1]
+fid = 123
+path = "temp_downloads/"
+postprocess = [{ action = "move", fid = 345 }]
 
-# # 示例2: 移除操作 - 下载后从收藏夹456移除视频
-# [favorite_list.task2] 
-# fid = 456
-# path = "downloads/"
-# postprocess = [
-#     { action = "remove" }
-# ]
+# ### 示例2: 移除操作 - 下载后从收藏夹456移除视频
+[favorite_list.task2]
+fid = 456
+path = "downloads/"
+postprocess = [{ action = "remove" }]
