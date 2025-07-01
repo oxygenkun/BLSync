@@ -1,19 +1,26 @@
 FROM python:3.12-alpine
 
+ARG UID=1000
+ARG GID=1000
+
+ENV UV_COMPILE_BYTECODE=1 \
+    PATH=/root/.local/bin:$PATH
+
 # install tools
 RUN apk update && apk add --no-cache ffmpeg
-RUN python -m pip install uv
-RUN uv tool install yutto
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # copy files
-COPY pyproject.toml requirements.lock README.md config src /app/
+COPY pyproject.toml uv.lock README.md /app/
+COPY config /app/config/
+COPY src /app/src/
 
 # install dependencies and project
 WORKDIR /app
-# RUN uv pip install --no-cache -r requirements.lock --system
-RUN --mount=source=dist,target=/dist uv pip install --no-cache /dist/*.whl --system
-RUN uv cache clean
+RUN uv sync --locked --no-editable \
+    && uv tool install yutto \
+    && uv cache clean
 
-CMD [ "bs", "-c", "/app/config/config.toml" ]
+CMD [ "uv", "run", "bs", "-c", "/app/config/config.toml" ]
 
 EXPOSE 8000
