@@ -15,12 +15,31 @@ task_queue = asyncio.Queue()
 # Track tasks that are currently queued or being processed
 queued_tasks = set()  # Set of (bvid, favid) tuples
 processing_tasks = set()  # Set of (bvid, favid) tuples currently being processed
+
+# 创建信号量来控制并发任务数
+semaphore = asyncio.Semaphore(global_configs.max_concurrent_tasks)
+
 bs = BScraper(global_configs)
+
+
+async def process_single_task(task_context):
+    """处理单个任务"""
+    async with semaphore:  # 限制并发数
+        task_key = task_context.get_task_key()
+        processing_tasks.add(task_key)
+        
+        try:
+            await task_context.execute()
+            logger.info(f"Task {task_key} completed successfully")
+        except Exception as e:
+            logger.error(f"Error processing task {task_key}: {e}")
+        finally:
+            processing_tasks.discard(task_key)
 
 
 async def task_consumer():
     """
-    处理下载任务队列
+    处理下载任务队列 - 并发版本
 
     queued_tasks --- Set of tasks that are currently queued
     processing_tasks --- Set of tasks that are currently being processed
@@ -33,16 +52,10 @@ async def task_consumer():
             break
 
         task_key = task_context.get_task_key()
-
         queued_tasks.discard(task_key)
-        processing_tasks.add(task_key)
 
-        try:
-            await task_context.execute()
-        except Exception as e:
-            logger.error(f"Error processing task {task_key}: {e}")
-        finally:
-            processing_tasks.discard(task_key)
+        # 创建异步任务，不等待完成
+        asyncio.create_task(process_single_task(task_context))
 
         task_queue.task_done()
         logger.info(f"[task_executor] queue has {task_queue.qsize()} tasks")

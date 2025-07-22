@@ -29,6 +29,12 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
         help="Show verbose output",
     )
 
+    parser.add_argument(
+        "--max-concurrent-tasks",
+        type=int,
+        help="Maximum number of concurrent download tasks",
+    )
+
     return parser.parse_args(args)
 
 
@@ -50,6 +56,7 @@ class Config:
 
     interval: int
     request_timeout: int
+    max_concurrent_tasks: int
     credential: ConfigCredential
     favorite_list: dict
 
@@ -93,6 +100,11 @@ def load_configs(args=None) -> Config:
         verbose=args.verbose,
         interval=toml_config["interval"],
         request_timeout=toml_config["request_timeout"],
+        max_concurrent_tasks=(
+            args.max_concurrent_tasks
+            if args.max_concurrent_tasks is not None
+            else toml_config.get("max_concurrent_tasks", 3)
+        ),
         credential=ConfigCredential(
             sessdata=toml_config["credential"]["sessdata"],
             bili_jct=toml_config["credential"]["bili_jct"],
