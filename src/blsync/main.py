@@ -29,8 +29,14 @@ async def process_single_task(task_context):
         processing_tasks.add(task_key)
         
         try:
-            await task_context.execute()
+            # 添加超时控制
+            await asyncio.wait_for(
+                task_context.execute(),
+                timeout=global_configs.task_timeout
+            )
             logger.info(f"Task {task_key} completed successfully")
+        except asyncio.TimeoutError:
+            logger.error(f"Task {task_key} timed out after {global_configs.task_timeout}s")
         except Exception as e:
             logger.error(f"Error processing task {task_key}: {e}")
         finally:

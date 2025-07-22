@@ -35,6 +35,12 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
         help="Maximum number of concurrent download tasks",
     )
 
+    parser.add_argument(
+        "--task-timeout",
+        type=int,
+        help="Task timeout in seconds",
+    )
+
     return parser.parse_args(args)
 
 
@@ -57,6 +63,7 @@ class Config:
     interval: int
     request_timeout: int
     max_concurrent_tasks: int
+    task_timeout: int
     credential: ConfigCredential
     favorite_list: dict
 
@@ -104,6 +111,11 @@ def load_configs(args=None) -> Config:
             args.max_concurrent_tasks
             if args.max_concurrent_tasks is not None
             else toml_config.get("max_concurrent_tasks", 3)
+        ),
+        task_timeout=(
+            args.task_timeout
+            if args.task_timeout is not None
+            else toml_config.get("task_timeout", 300)
         ),
         credential=ConfigCredential(
             sessdata=toml_config["credential"]["sessdata"],

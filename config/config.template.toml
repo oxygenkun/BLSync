@@ -1,6 +1,7 @@
 interval = 1200       # 表示程序每次执行扫描下载的间隔时间，单位为秒。
 request_timeout = 300 # 表示程序获取b站信息请求超时时间，单位为秒。一般不需要更改。
-max_concurrent_tasks = 3 # 同时进行的最大下载任务数，默认为3。可以根据网络和系统性能调整。
+max_concurrent_tasks = 3 # 同时进行的最大下载任务数，默认为3。不建议设置过多。
+task_timeout = 600          # 单个任务的超时时间，单位为秒。
 data_path = "config/" # 程序运行数据保存的 sqlite 文件保存地址，避免重复下载。
 
 [credential]
