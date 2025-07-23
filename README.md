@@ -44,6 +44,10 @@ services:
     restart: unless-stopped
 ```
 
+> - `/app/config` ：[配置文件](#配置文件)所在目录，存储配置文件 `config.toml`；也是程序数据库默认存储位置
+> - `/app/sync` ：收藏夹视频默认存储位置
+
+
 3. 创建配置文件 `./config/config.toml`（参考[配置文件](#配置文件)章节）
 
 4. 启动服务
@@ -62,11 +66,6 @@ docker compose logs -f
 docker compose down
 ```
 
-### 目录说明
-
-- `/app/config` ：[配置文件](#配置文件)所在目录，存储配置文件 `config.toml`；程序默认数据库存储位置
-- `/app/sync` ：默认收藏夹视频存储位置
-
 ## 源码运行
 
 1. 安装 `uv` 包管理器
@@ -84,7 +83,7 @@ uv run bs -c config/config.toml
 
 默认读取 `./config/config.toml` （参考模板文件 [`./config/config.template.toml`](./config/config.template.toml) 中的说明）。
 
-## 收藏夹 id 获取方法
+## 收藏夹 id (fid) 获取方法
 
 ![image](https://github.com/user-attachments/assets/02efefe9-0a3a-46d6-8646-a6aa462d62c2)
 
