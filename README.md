@@ -92,6 +92,10 @@ uv run bs -c config/config.toml
 
 ![image](https://github.com/user-attachments/assets/76c298d7-6437-4e12-8333-a80f4802b8d1)
 
+# 更新日志
+
+[CHANGELOG](./CHANGELOG.md)
+
 # 特别感谢
 
 该项目实现过程中主要参考借鉴了如下的项目，感谢他们的贡献：
