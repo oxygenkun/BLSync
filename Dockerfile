@@ -8,11 +8,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # install tools
 RUN apk update && apk add --no-cache ffmpeg
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.14 /uv /uvx /bin/
 
 # copy files
 COPY pyproject.toml uv.lock README.md /app/
-COPY config /app/config/
 COPY src /app/src/
 
 # install dependencies and project
