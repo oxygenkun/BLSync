@@ -40,3 +40,16 @@ postprocess = [{ action = "move", fid = 345 }]
 fid = 456
 path = "downloads/"
 postprocess = [{ action = "remove" }]
+
+# ## path 模板替换
+# 支持
+# {YYYY}   四位数年份
+# {YY}     两位数年份
+# {MM}     两位数月份
+# {DD}     两位数日期
+# {HH}     两位数小时
+# {mm}     两位数分钟
+# {SS}     两位数秒数
+#
+# 示例
+# path = "downloads/{YYYY}{MM}"

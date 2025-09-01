@@ -1,9 +1,11 @@
 """
 Bilibili消费者模块 - 处理Bilibili相关的下载任务
 """
+
 import asyncio
 import dataclasses
 import pathlib
+from datetime import datetime
 
 import aiohttp
 from loguru import logger
@@ -19,11 +21,34 @@ from .base import TaskContext
 @dataclasses.dataclass
 class BiliVideoTaskContext(TaskContext):
     """Bilibili视频下载任务"""
+
     bid: str
     favid: str
 
     def get_task_key(self) -> tuple:
         return (self.bid, self.favid)
+
+    def _format_download_path(self, path_template: str) -> pathlib.Path:
+        """格式化下载路径，支持Python format语法"""
+        now = datetime.now()
+        format_vars = {
+            "YYYY": now.strftime("%Y"),  # 四位数年份
+            "YY": now.strftime("%y"),  # 两位数年份
+            "MM": now.strftime("%m"),  # 两位数月份
+            "DD": now.strftime("%d"),  # 两位数日期
+            "HH": now.strftime("%H"),  # 两位数小时
+            "mm": now.strftime("%M"),  # 两位数分钟
+            "SS": now.strftime("%S"),  # 两位数秒数
+        }
+
+        try:
+            formatted_path = path_template.format(**format_vars)
+            return pathlib.Path(formatted_path)
+        except KeyError as e:
+            logger.warning(
+                f"Unknown format variable {e} in path {path_template}, using original path"
+            )
+            return pathlib.Path(path_template)
 
     async def execute(self) -> None:
         """Execute video download task"""
@@ -38,13 +63,17 @@ class BiliVideoTaskContext(TaskContext):
         fav_config = global_configs.favorite_list[favid]
         if isinstance(fav_config, str):
             # 简单格式: fid = "path"
-            fav_download_path = pathlib.Path(fav_config)
+            fav_download_path = self._format_download_path(fav_config)
         elif isinstance(fav_config, dict):
             # 复杂格式: 包含path字段
-            fav_download_path = pathlib.Path(fav_config.get("path", ""))
+            path_template = fav_config.get("path", "")
+            fav_download_path = self._format_download_path(path_template)
         else:
             logger.info(f"Invalid favorite_list config for {favid}")
             return
+
+        if not fav_download_path.parent.exists():
+            fav_download_path.mkdir(parents=True, exist_ok=True)
 
         # 获取视频信息
         bs = BScraper(global_configs)
