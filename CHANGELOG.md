@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 添加任务超时控制机制，防止任务长时间挂起
 - 实现并发下载任务处理
 - 添加任务状态跟踪，防止重复任务和资源浪费
+- 添加下载目录模板功能
 
 ### Changed
 - 优化任务队列管理，提升并发处理能力
