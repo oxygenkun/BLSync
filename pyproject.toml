@@ -1,6 +1,6 @@
 [project]
 name = "BLSync"
-version = "0.2.0"
+version = "0.3.0"
 description = "BLSync is for syncing your bilibili favorite list to local."
 authors = [
     {name = "oxygenkun", email = "oxygenkun.1@gmail.com"}
