@@ -3,7 +3,6 @@ Bilibili消费者模块 - 处理Bilibili相关的下载任务
 """
 
 import asyncio
-import dataclasses
 import pathlib
 from datetime import datetime
 
@@ -11,14 +10,13 @@ import aiohttp
 from loguru import logger
 from yutto.processor.path_resolver import repair_filename
 
-from .. import global_configs
+from .. import get_global_configs
 from ..db_access import already_download_bvids, already_download_bvids_add
 from ..postprocessor import PostProcessor
 from ..scraper import BScraper
 from .base import TaskContext
 
 
-@dataclasses.dataclass
 class BiliVideoTaskContext(TaskContext):
     """Bilibili视频下载任务"""
 
@@ -54,6 +52,7 @@ class BiliVideoTaskContext(TaskContext):
         """Execute video download task"""
         bid = self.bid
         favid = self.favid
+        global_configs = get_global_configs()
 
         if bid in already_download_bvids(media_id=favid, configs=global_configs):
             logger.info(f"Already downloaded {bid}")
@@ -61,16 +60,14 @@ class BiliVideoTaskContext(TaskContext):
 
         # 获取下载路径，支持简单和复杂配置格式
         fav_config = global_configs.favorite_list[favid]
-        if isinstance(fav_config, str):
-            # 简单格式: fid = "path"
-            fav_download_path = self._format_download_path(fav_config)
-        elif isinstance(fav_config, dict):
-            # 复杂格式: 包含path字段
-            path_template = fav_config.get("path", "")
-            fav_download_path = self._format_download_path(path_template)
-        else:
-            logger.info(f"Invalid favorite_list config for {favid}")
-            return
+        # if isinstance(fav_config, str):
+        #     # 简单格式: fid = "path"
+        #     fav_download_path = self._format_download_path(fav_config)
+        # elif isinstance(fav_config, dict):
+        #     # 复杂格式: 包含path字段
+        #     path_template = fav_config.get("path", "")
+        #     fav_download_path = self._format_download_path(path_template)
+        fav_download_path = self._format_download_path(fav_config.path)
 
         if not fav_download_path.parent.exists():
             fav_download_path.mkdir(parents=True, exist_ok=True)

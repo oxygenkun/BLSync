@@ -1,15 +1,17 @@
 """
 任务消费者基础模块
 """
-import dataclasses
+
 from abc import ABC, abstractmethod
+
+from pydantic import BaseModel
 
 from ..configs import Config
 
 
-@dataclasses.dataclass
-class TaskContext(ABC):
+class TaskContext(BaseModel, ABC):
     """任务上下文基类"""
+
     config: Config
 
     @abstractmethod

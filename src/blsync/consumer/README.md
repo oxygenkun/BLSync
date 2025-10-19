@@ -36,7 +36,6 @@ consumer/
 ### 1. 创建新的任务类型
 
 ```python
-@dataclasses.dataclass
 class MyCustomTaskContext(TaskContext):
     param1: str
     param2: int

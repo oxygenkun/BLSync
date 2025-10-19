@@ -1,8 +1,9 @@
+import abc
 import argparse
-import dataclasses
 import pathlib
 
 import toml
+from pydantic import BaseModel
 
 
 def parse_command_line_args(args=None) -> argparse.Namespace:
@@ -44,17 +45,34 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-@dataclasses.dataclass
-class ConfigCredential:
-    sessdata: str
-    bili_jct: str
-    buvid3: str
-    dedeuserid: str
-    ac_time_value: str
+class ConfigCredential(BaseModel):
+    sessdata: str | None = None
+    bili_jct: str | None = None
+    buvid3: str | None = None
+    dedeuserid: str | None = None
+    ac_time_value: str | None = None
 
 
-@dataclasses.dataclass
-class Config:
+class PostprocessConfig(abc.ABC, BaseModel):
+    action: str
+
+
+class MovePostprocessConfig(PostprocessConfig):
+    action: str = "move"
+    fid: str
+
+
+class RemovePostprocessConfig(PostprocessConfig):
+    action: str = "remove"
+
+
+class FavoriteListConfig(BaseModel):
+    fid: str
+    path: str
+    postprocess: list[PostprocessConfig] | None = None
+
+
+class Config(BaseModel):
     config_file: pathlib.Path
     data_path: pathlib.Path
 
@@ -65,7 +83,15 @@ class Config:
     max_concurrent_tasks: int
     task_timeout: int
     credential: ConfigCredential
-    favorite_list: dict
+    favorite_list: dict[str, FavoriteListConfig]
+
+
+def _post_process_match(value: dict) -> PostprocessConfig:
+    match value["action"]:
+        case "move":
+            return MovePostprocessConfig(fid=value["fid"])
+        case "remove":
+            return RemovePostprocessConfig()
 
 
 def load_configs(args=None) -> Config:
@@ -78,21 +104,24 @@ def load_configs(args=None) -> Config:
     toml_config = toml.load(args.config)
 
     # 处理favorite_list配置，支持复杂配置格式
-    favorite_list = {}
+    # favorite_list = {}
+    favorite_list: dict[str, FavoriteListConfig] = {
+        "-1": FavoriteListConfig(fid="-1", path="sync/"),
+    }
     if "favorite_list" in toml_config:
         for key, value in toml_config["favorite_list"].items():
             if isinstance(value, str):
                 # 简单格式: fid = "path"
-                favorite_list[key] = value
+                favorite_list[key] = FavoriteListConfig(fid=key, path=value)
             elif isinstance(value, dict):
                 # 复杂格式: [favorite_list.taskname] with fid, path, postprocess
-                if "fid" in value:
-                    # 这是一个任务配置，需要将其映射到对应的fid
-                    fid = str(value["fid"])
-                    favorite_list[fid] = value
-                else:
-                    # 保持原格式
-                    favorite_list[key] = value
+                favorite_list[key] = FavoriteListConfig(
+                    fid=str(value["fid"]),
+                    path=value["path"],
+                    postprocess=[_post_process_match(p) for p in value["postprocess"]],
+                )
+            else:
+                raise ValueError(f"Invalid favorite_list configuration: {value}")
 
     config = Config(
         config_file=args.config,
@@ -154,7 +183,7 @@ def save_cookies_to_txt(credential: ConfigCredential, path: pathlib.Path) -> Non
         "# This is a generated file! Do not edit.",
         "",
     ]
-    for name, value in dataclasses.fields(credential):
+    for name, value in credential.model_dump().items():
         if value:
             cookies_lines.append(
                 f".bilibili.com\tTRUE\t/\tFALSE\t0\t{name.upper()}\t{value}"

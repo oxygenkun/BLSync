@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from . import global_configs
+from . import get_global_configs
 from .consumer.bilibili import BiliVideoTaskContext
 from .db_access import already_download_bvids
 from .scraper import BScraper
@@ -17,26 +17,35 @@ queued_tasks = set()  # Set of (bvid, favid) tuples
 processing_tasks = set()  # Set of (bvid, favid) tuples currently being processed
 
 # 创建信号量来控制并发任务数
-semaphore = asyncio.Semaphore(global_configs.max_concurrent_tasks)
+_semaphore = None
 
-bs = BScraper(global_configs)
+def get_semaphore():
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(get_global_configs().max_concurrent_tasks)
+    return _semaphore
+
+def get_scraper():
+    return BScraper(get_global_configs())
 
 
 async def process_single_task(task_context):
     """处理单个任务"""
-    async with semaphore:  # 限制并发数
+    config = get_global_configs()
+    async with get_semaphore():  # 限制并发数
         task_key = task_context.get_task_key()
         processing_tasks.add(task_key)
-        
+
         try:
             # 添加超时控制
             await asyncio.wait_for(
-                task_context.execute(),
-                timeout=global_configs.task_timeout
+                task_context.execute(), timeout=config.task_timeout
             )
             logger.info(f"Task {task_key} completed successfully")
         except asyncio.TimeoutError:
-            logger.error(f"Task {task_key} timed out after {global_configs.task_timeout}s")
+            logger.error(
+                f"Task {task_key} timed out after {config.task_timeout}s"
+            )
         except Exception as e:
             logger.error(f"Error processing task {task_key}: {e}")
         finally:
@@ -71,11 +80,12 @@ async def task_producer():
     """
     定时获取
     """
-    bs = BScraper(global_configs)
+    config = get_global_configs()
+    bs = get_scraper()
     while True:
         async for bvid, favid in bs.get_all_bvids():
             # 创建任务实例
-            task = BiliVideoTaskContext(config=global_configs, bid=bvid, favid=favid)
+            task = BiliVideoTaskContext(config=config, bid=bvid, favid=favid)
             task_key = task.get_task_key()
 
             # Check if task is already queued or being processed
@@ -86,7 +96,7 @@ async def task_producer():
                 continue
 
             # Check if already downloaded
-            if bvid in already_download_bvids(media_id=favid, configs=global_configs):
+            if bvid in already_download_bvids(media_id=favid, configs=config):
                 logger.debug(f"Video {bvid} already downloaded, skipping")
                 continue
 
@@ -98,9 +108,9 @@ async def task_producer():
             )
 
         logger.info(
-            f"[generator] Sleeping for a while: {global_configs.interval} seconds"
+            f"[generator] Sleeping for a while: {config.interval} seconds"
         )
-        await asyncio.sleep(global_configs.interval)
+        await asyncio.sleep(config.interval)
 
 
 async def cleanup_stale_tasks():
@@ -111,13 +121,14 @@ async def cleanup_stale_tasks():
         await asyncio.sleep(300)  # 每5分钟检查一次
 
         # 清理已下载但仍在追踪集合中的任务
+        config = get_global_configs()
         stale_tasks = []
         for task_key in queued_tasks.union(processing_tasks):
             # 处理不同类型的任务键
             if len(task_key) == 2:  # (bvid, favid) 格式
                 bvid, favid = task_key
                 if bvid in already_download_bvids(
-                    media_id=favid, configs=global_configs
+                    media_id=favid, configs=config
                 ):
                     stale_tasks.append(task_key)
             # 其他类型的任务键可以在这里添加处理逻辑
@@ -164,9 +175,10 @@ class TaskRequest(BaseModel):
 @app.post("/tasks/")
 async def create_task(task: TaskRequest):
     try:
+        config = get_global_configs()
         # 创建任务实例
         task_instance = BiliVideoTaskContext(
-            config=global_configs, bid=task.bid, favid=task.favid
+            config=config, bid=task.bid, favid=task.favid
         )
         task_key = task_instance.get_task_key()
 
@@ -179,7 +191,7 @@ async def create_task(task: TaskRequest):
 
         # Check if already downloaded
         if task.bid in already_download_bvids(
-            media_id=task.favid, configs=global_configs
+            media_id=task.favid, configs=config
         ):
             return {
                 "status": "already_downloaded",
