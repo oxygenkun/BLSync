@@ -168,7 +168,7 @@ class BiliVideoPostprocessMove(Postprocess):
         tasks_name = self._task_context.task_name
         configs = self._task_context.config
         credential = credential_from_config(configs.credential)
-        
+
         aid = await aid_from_bvid(bid, credential)
         from_fid = configs.favorite_list[tasks_name].fid
         to_fid = self._post_config.fid
