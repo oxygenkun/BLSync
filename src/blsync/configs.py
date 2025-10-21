@@ -70,6 +70,7 @@ type PostprocessConfigT = MovePostprocessConfig | RemovePostprocessConfig
 class FavoriteListConfig(BaseModel):
     fid: str
     path: str
+    name: str | None = None
     postprocess: list[PostprocessConfigT] | None = None
 
 
@@ -115,10 +116,11 @@ def load_configs(args=None) -> Config:
                 # 简单格式: fid = "path"
                 favorite_list[key] = FavoriteListConfig(fid=key, path=value)
             elif isinstance(value, dict):
-                # 复杂格式: [favorite_list.taskname] with fid, path, postprocess
+                # 复杂格式: [favorite_list.taskname] with fid, path, name, postprocess
                 favorite_list[key] = FavoriteListConfig(
                     fid=str(value["fid"]),
                     path=value["path"],
+                    name=value.get("name"),
                     postprocess=[_post_process_match(p) for p in value["postprocess"]],
                 )
             else:

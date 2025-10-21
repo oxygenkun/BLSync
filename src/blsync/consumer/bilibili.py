@@ -109,6 +109,7 @@ class BiliVideoTask(Task):
                 download_path=fav_download_path,
                 configs=configs,
                 is_batch=is_batch,
+                name_template=fav_config.name,
             ),
             download_file(v_info["pic"], cover_path),
         )
@@ -216,6 +217,7 @@ async def download_video(
     configs: Config | None = None,
     extra_list_options: list[str] | None = None,
     is_batch: bool = False,
+    name_template: str | None = None,
 ) -> bool:
     """
     使用 yutto 下载视频。
@@ -245,6 +247,11 @@ async def download_video(
     if is_batch:
         command.insert(-1, "--batch")
         logger.info(f"Added --batch parameter for multi-part video {bvid}")
+
+    # 如果提供了name模板，添加--subpath-template参数
+    if name_template:
+        command.extend(["--subpath-template", name_template])
+        logger.info(f"Added --subpath-template parameter with template: {name_template}")
 
     if extra_list_options:
         command.extend(extra_list_options)

@@ -1,8 +1,8 @@
-interval = 1200             # 每次执行扫描下载的间隔时间，单位为秒。
-request_timeout = 300       # 获取b站信息请求的超时时间，单位为秒。
-max_concurrent_tasks = 3    # 同时进行的最大下载任务数，默认为3。不建议设置过多。
-task_timeout = 600          # 单个任务的超时时间，单位为秒。
-data_path = "config/"       # 保存程序运行数据的 sqlite 文件地址，避免重复下载。
+interval = 1200          # 每次执行扫描下载的间隔时间，单位为秒。
+request_timeout = 300    # 获取b站信息请求的超时时间，单位为秒。
+max_concurrent_tasks = 3 # 同时进行的最大下载任务数，默认为3。不建议设置过多。
+task_timeout = 600       # 单个任务的超时时间，单位为秒。
+data_path = "config/"    # 保存程序运行数据的 sqlite 文件地址，避免重复下载。
 
 [credential]
 # 哔哩哔哩账号的身份凭据，请参考凭据获取[流程获取](https://nemo2011.github.io/bilibili-api/#/get-credential)
@@ -28,11 +28,27 @@ bili_jct = "" # **必填项**
 # 1. 支持设置任务名
 # 2. 可以在下载后进行一些操作
 #    支持的操作：move (移动到其他收藏夹), remove (从收藏夹移除)
+#
+# ### path 模板替换
+# 支持:
+#   {YYYY}   四位数年份
+#   {YY}     两位数年份
+#   {MM}     两位数月份
+#   {DD}     两位数日期
+#   {HH}     两位数小时
+#   {mm}     两位数分钟
+#   {SS}     两位数秒数
+# 示例：
+# > path = "downloads/{YYYY}{MM}"
+# 
+# ### name 模板替换
+# yutto原生模板，参考 https://yutto.nyakku.moe/guide/cli/basic#%E5%AD%98%E6%94%BE%E5%AD%90%E8%B7%AF%E5%BE%84%E6%A8%A1%E6%9D%BF
 
 # ### 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
 [favorite_list.task1]
 fid = 123
 path = "temp_downloads/"
+name = "{name}({bvid})"
 postprocess = [{ action = "move", fid = 345 }]
 
 # ### 示例2: 移除操作 - 下载后从收藏夹456移除视频
@@ -40,16 +56,3 @@ postprocess = [{ action = "move", fid = 345 }]
 fid = 456
 path = "downloads/"
 postprocess = [{ action = "remove" }]
-
-# ## path 模板替换
-# 支持
-# {YYYY}   四位数年份
-# {YY}     两位数年份
-# {MM}     两位数月份
-# {DD}     两位数日期
-# {HH}     两位数小时
-# {mm}     两位数分钟
-# {SS}     两位数秒数
-#
-# 示例
-# path = "downloads/{YYYY}{MM}"
