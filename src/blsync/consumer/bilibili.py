@@ -121,15 +121,6 @@ class BiliVideoTask(Task):
 
         # 执行下载后处理
         await self.execute_postprocess()
-        # post_processor = PostProcessor(global_configs)
-        # postprocess_actions = post_processor.get_postprocess_actions(favid)
-        # if postprocess_actions:
-        #     logger.info(
-        #         f"Executing postprocess actions for {bid}: {postprocess_actions}"
-        #     )
-        #     await post_processor.execute_postprocess_actions(
-        #         bid, favid, postprocess_actions
-        #     )
 
     async def execute_postprocess(self) -> None:
         postprocess_configs = self._task_context.config.favorite_list[
