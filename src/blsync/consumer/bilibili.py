@@ -286,6 +286,15 @@ async def download_file(url, download_path: pathlib.Path):
     if not download_path.parent.exists():
         download_path.mkdir(parents=True, exist_ok=True)
 
+    if download_path.exists():
+        # Add suffix if file exists
+        stem = download_path.stem
+        suffix = download_path.suffix
+        counter = 1
+        while download_path.exists():
+            download_path = download_path.with_name(f"{stem}_{counter}{suffix}")
+            counter += 1
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             download_path.write_bytes(await resp.read())
