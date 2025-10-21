@@ -6,13 +6,32 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
-from ..configs import Config
+from blsync.configs import Config
 
 
 class TaskContext(BaseModel, ABC):
     """任务上下文基类"""
 
     config: Config
+
+    # @abstractmethod
+    # async def execute(self) -> None:
+    #     """Execute the task"""
+    #     pass
+
+    # @abstractmethod
+    # def get_task_key(self) -> tuple:
+    #     """Get unique identifier for the task"""
+    #     pass
+
+
+class Task(ABC):
+    """任务基类"""
+
+    # _task_context: TaskContext
+
+    # def __init__(self, task_context: TaskContext):
+    #     self._task_context = task_context
 
     @abstractmethod
     async def execute(self) -> None:
@@ -22,4 +41,17 @@ class TaskContext(BaseModel, ABC):
     @abstractmethod
     def get_task_key(self) -> tuple:
         """Get unique identifier for the task"""
+
+
+class Postprocess(BaseModel, ABC):
+    """后处理基类"""
+
+    # _task_context: TaskContext
+
+    # def __init__(self, task_context: TaskContext):
+    #     self._task_context = task_context
+
+    @abstractmethod
+    async def execute(self) -> None:
+        """Execute the postprocess"""
         pass

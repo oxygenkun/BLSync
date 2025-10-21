@@ -5,28 +5,50 @@ Bilibili消费者模块 - 处理Bilibili相关的下载任务
 import asyncio
 import pathlib
 from datetime import datetime
+from functools import lru_cache
 
 import aiohttp
+from bilibili_api import Credential
+from bilibili_api.favorite_list import (
+    delete_video_favorite_list_content,
+    move_video_favorite_list_content,
+)
+from bilibili_api.video import Video
 from loguru import logger
 from yutto.processor.path_resolver import repair_filename
 
-from .. import get_global_configs
-from ..db_access import already_download_bvids, already_download_bvids_add
-from ..postprocessor import PostProcessor
-from ..scraper import BScraper
-from .base import TaskContext
+# from blsync import get_global_configs
+from blsync.configs import (
+    Config,
+    ConfigCredential,
+    MovePostprocessConfig,
+    RemovePostprocessConfig,
+)
+from blsync.consumer.base import Postprocess, Task, TaskContext
+from blsync.db_access import already_download_bvids, already_download_bvids_add
+
+# from blsync.postprocessor import PostProcessor
+from blsync.scraper import BScraper
 
 
 class BiliVideoTaskContext(TaskContext):
-    """Bilibili视频下载任务"""
+    """Bilibili视频下载任务上下文"""
 
     bid: str
-    favid: str
+    task_name: str
+
+
+class BiliVideoTask(Task):
+    """Bilibili视频下载任务"""
+
+    def __init__(self, task_context: BiliVideoTaskContext):
+        self._task_context = task_context
 
     def get_task_key(self) -> tuple:
-        return (self.bid, self.favid)
+        return (self._task_context.bid, self._task_context.task_name)
 
-    def _format_download_path(self, path_template: str) -> pathlib.Path:
+    @staticmethod
+    def _format_download_path(path_template: str) -> pathlib.Path:
         """格式化下载路径，支持Python format语法"""
         now = datetime.now()
         format_vars = {
@@ -50,30 +72,23 @@ class BiliVideoTaskContext(TaskContext):
 
     async def execute(self) -> None:
         """Execute video download task"""
-        bid = self.bid
-        favid = self.favid
-        global_configs = get_global_configs()
+        bid = self._task_context.bid
+        task_name = self._task_context.task_name
+        configs = self._task_context.config
 
-        if bid in already_download_bvids(media_id=favid, configs=global_configs):
+        if bid in already_download_bvids(media_id=bid, configs=configs):
             logger.info(f"Already downloaded {bid}")
             return
 
         # 获取下载路径，支持简单和复杂配置格式
-        fav_config = global_configs.favorite_list[favid]
-        # if isinstance(fav_config, str):
-        #     # 简单格式: fid = "path"
-        #     fav_download_path = self._format_download_path(fav_config)
-        # elif isinstance(fav_config, dict):
-        #     # 复杂格式: 包含path字段
-        #     path_template = fav_config.get("path", "")
-        #     fav_download_path = self._format_download_path(path_template)
+        fav_config = configs.favorite_list[task_name]
         fav_download_path = self._format_download_path(fav_config.path)
 
         if not fav_download_path.parent.exists():
             fav_download_path.mkdir(parents=True, exist_ok=True)
 
         # 获取视频信息
-        bs = BScraper(global_configs)
+        bs = BScraper(configs)
         v_info = await bs.get_video_info(bid)
         if v_info is None:
             logger.info(f"Failed to get video info for {bid}")
@@ -92,37 +107,125 @@ class BiliVideoTaskContext(TaskContext):
             download_video(
                 bvid=bid,
                 download_path=fav_download_path,
-                configs=self.config,
+                configs=configs,
                 is_batch=is_batch,
             ),
             download_file(v_info["pic"], cover_path),
         )
 
-        already_download_bvids_add(
-            media_id=favid,
-            bvid=bid,
-            configs=global_configs,
-        )
+        # already_download_bvids_add(
+        #     media_id=favid,
+        #     bvid=bid,
+        #     configs=global_configs,
+        # )
 
         # 执行下载后处理
-        post_processor = PostProcessor(global_configs)
-        postprocess_actions = post_processor.get_postprocess_actions(favid)
-        if postprocess_actions:
-            logger.info(
-                f"Executing postprocess actions for {bid}: {postprocess_actions}"
-            )
-            await post_processor.execute_postprocess_actions(
-                bid, favid, postprocess_actions
-            )
+        await self.execute_postprocess()
+        # post_processor = PostProcessor(global_configs)
+        # postprocess_actions = post_processor.get_postprocess_actions(favid)
+        # if postprocess_actions:
+        #     logger.info(
+        #         f"Executing postprocess actions for {bid}: {postprocess_actions}"
+        #     )
+        #     await post_processor.execute_postprocess_actions(
+        #         bid, favid, postprocess_actions
+        #     )
+
+    async def execute_postprocess(self) -> None:
+        postprocess_configs = self._task_context.config.favorite_list[
+            self._task_context.task_name
+        ].postprocess
+
+        postprocess_tasks = []
+        for post_config in postprocess_configs:
+            match post_config:
+                case MovePostprocessConfig():
+                    postprocess_tasks.append(
+                        BiliVideoPostprocessMove(self._task_context, post_config)
+                    )
+                case RemovePostprocessConfig():
+                    postprocess_tasks.append(
+                        BiliVideoPostprocessRemove(self._task_context)
+                    )
+                case _:
+                    logger.warning(f"Unknown postprocess action: {post_config.action}")
+
+        for task in postprocess_tasks:
+            await task.execute()
+
+
+class BiliVideoPostprocessMove(Postprocess):
+    """Bilibili视频后处理 - 移动到其他收藏夹"""
+
+    def __init__(
+        self, task_context: BiliVideoTaskContext, post_config: MovePostprocessConfig
+    ):
+        self._task_context = task_context
+        self._post_config = post_config
+
+    async def execute(self) -> None:
+        bid = self._task_context.bid
+        tasks_name = self._task_context.task_name
+        configs = self._task_context.config
+        credential = credential_from_config(configs.credential)
+        
+        aid = await aid_from_bvid(bid, credential)
+        from_fid = configs.favorite_list[tasks_name].fid
+        to_fid = self._post_config.fid
+
+        await move_video_favorite_list_content(
+            media_id_from=from_fid,
+            media_id_to=to_fid,
+            aids=[aid],
+            credential=credential,
+        )
+        logger.debug(f"Moved video {aid} from {from_fid} to {to_fid}")
+
+
+class BiliVideoPostprocessRemove(Postprocess):
+    """Bilibili视频后处理 - 从收藏夹中移除"""
+
+    def __init__(self, task_context: BiliVideoTaskContext):
+        self._task_context = task_context
+
+    async def execute(self) -> None:
+        aid = await aid_from_bvid(self._task_context.bid, self.config.credential)
+        tasks_name = self._task_context.task_name
+        fid = self._task_context.favorite_list[tasks_name].fid
+        await delete_video_favorite_list_content(
+            media_id=fid,
+            aids=[aid],
+            credential=self.config.credential,
+        )
+        logger.debug(f"Removed video {aid} from {fid}")
+
+
+@lru_cache(maxsize=1000)
+def credential_from_config(config: ConfigCredential) -> Credential:
+    return Credential(
+        sessdata=config.sessdata,
+        bili_jct=config.bili_jct,
+        buvid3=config.buvid3,
+        dedeuserid=config.dedeuserid,
+        ac_time_value=config.ac_time_value,
+    )
+
+
+@lru_cache(maxsize=1000)
+async def aid_from_bvid(bvid: str, credential: Credential) -> int:
+    """从bvid获取aid"""
+    v = Video(bvid=bvid, credential=credential)
+    video_info = await v.get_info()
+    return video_info["aid"]
 
 
 async def download_video(
-    bvid,
-    download_path,
-    configs=None,
-    extra_list_options=None,
-    is_batch=False,
-):
+    bvid: str,
+    download_path: pathlib.Path,
+    configs: Config | None = None,
+    extra_list_options: list[str] | None = None,
+    is_batch: bool = False,
+) -> bool:
     """
     使用 yutto 下载视频。
 
@@ -180,6 +283,9 @@ async def download_file(url, download_path: pathlib.Path):
     """
     下载文件
     """
+    if not download_path.parent.exists():
+        download_path.mkdir(parents=True, exist_ok=True)
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             download_path.write_bytes(await resp.read())

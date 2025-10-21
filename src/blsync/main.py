@@ -6,10 +6,11 @@ from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from . import get_global_configs
-from .consumer.bilibili import BiliVideoTaskContext
-from .db_access import already_download_bvids
-from .scraper import BScraper
+from blsync import get_global_configs
+from blsync.consumer.base import Task
+from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
+from blsync.db_access import already_download_bvids
+from blsync.scraper import BScraper
 
 task_queue = asyncio.Queue()
 # Track tasks that are currently queued or being processed
@@ -19,33 +20,31 @@ processing_tasks = set()  # Set of (bvid, favid) tuples currently being processe
 # 创建信号量来控制并发任务数
 _semaphore = None
 
+
 def get_semaphore():
     global _semaphore
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(get_global_configs().max_concurrent_tasks)
     return _semaphore
 
+
 def get_scraper():
     return BScraper(get_global_configs())
 
 
-async def process_single_task(task_context):
+async def process_single_task(task: Task):
     """处理单个任务"""
     config = get_global_configs()
     async with get_semaphore():  # 限制并发数
-        task_key = task_context.get_task_key()
+        task_key = task.get_task_key()
         processing_tasks.add(task_key)
 
         try:
             # 添加超时控制
-            await asyncio.wait_for(
-                task_context.execute(), timeout=config.task_timeout
-            )
+            await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
             logger.info(f"Task {task_key} completed successfully")
         except asyncio.TimeoutError:
-            logger.error(
-                f"Task {task_key} timed out after {config.task_timeout}s"
-            )
+            logger.error(f"Task {task_key} timed out after {config.task_timeout}s")
         except Exception as e:
             logger.error(f"Error processing task {task_key}: {e}")
         finally:
@@ -63,14 +62,21 @@ async def task_consumer():
     while True:
         task_context = await task_queue.get()
 
-        if task_context is None:
+        match task_context:
+            case BiliVideoTaskContext():
+                task = BiliVideoTask(task_context)
+            case _:
+                logger.warning(f"Unknown task context: {task_context}")
+                task = None
+
+        if task is None:
             break
 
-        task_key = task_context.get_task_key()
+        task_key = task.get_task_key()
         queued_tasks.discard(task_key)
 
         # 创建异步任务，不等待完成
-        asyncio.create_task(process_single_task(task_context))
+        asyncio.create_task(process_single_task(task))
 
         task_queue.task_done()
         logger.info(f"[task_executor] queue has {task_queue.qsize()} tasks")
@@ -83,33 +89,32 @@ async def task_producer():
     config = get_global_configs()
     bs = get_scraper()
     while True:
-        async for bvid, favid in bs.get_all_bvids():
+        async for bvid, task_name in bs.get_all_bvids():
             # 创建任务实例
-            task = BiliVideoTaskContext(config=config, bid=bvid, favid=favid)
+            context = BiliVideoTaskContext(config=config, bid=bvid, task_name=task_name)
+            task = BiliVideoTask(context)
             task_key = task.get_task_key()
 
             # Check if task is already queued or being processed
             if task_key in queued_tasks or task_key in processing_tasks:
                 logger.debug(
-                    f"Task {bvid} (favid: {favid}) already queued or processing, skipping"
+                    f"Task {bvid} (task_name: {task_name}) already queued or processing, skipping"
                 )
                 continue
 
             # Check if already downloaded
-            if bvid in already_download_bvids(media_id=favid, configs=config):
+            if bvid in already_download_bvids(media_id=bvid, configs=config):
                 logger.debug(f"Video {bvid} already downloaded, skipping")
                 continue
 
             # Add to queued tasks and put in queue
             queued_tasks.add(task_key)
-            await task_queue.put(task)
+            await task_queue.put(context)
             logger.info(
                 f"[generator] Added new task {bvid}, queue has {task_queue.qsize()} tasks"
             )
 
-        logger.info(
-            f"[generator] Sleeping for a while: {config.interval} seconds"
-        )
+        logger.info(f"[generator] Sleeping for a while: {config.interval} seconds")
         await asyncio.sleep(config.interval)
 
 
@@ -127,9 +132,7 @@ async def cleanup_stale_tasks():
             # 处理不同类型的任务键
             if len(task_key) == 2:  # (bvid, favid) 格式
                 bvid, favid = task_key
-                if bvid in already_download_bvids(
-                    media_id=favid, configs=config
-                ):
+                if bvid in already_download_bvids(media_id=favid, configs=config):
                     stale_tasks.append(task_key)
             # 其他类型的任务键可以在这里添加处理逻辑
 
@@ -190,9 +193,7 @@ async def create_task(task: TaskRequest):
             }
 
         # Check if already downloaded
-        if task.bid in already_download_bvids(
-            media_id=task.favid, configs=config
-        ):
+        if task.bid in already_download_bvids(media_id=task.favid, configs=config):
             return {
                 "status": "already_downloaded",
                 "message": f"Video {task.bid} is already downloaded",

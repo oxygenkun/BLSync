@@ -3,7 +3,7 @@ import argparse
 import pathlib
 
 import toml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 def parse_command_line_args(args=None) -> argparse.Namespace:
@@ -46,6 +46,8 @@ def parse_command_line_args(args=None) -> argparse.Namespace:
 
 
 class ConfigCredential(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     sessdata: str | None = None
     bili_jct: str | None = None
     buvid3: str | None = None
@@ -53,23 +55,22 @@ class ConfigCredential(BaseModel):
     ac_time_value: str | None = None
 
 
-class PostprocessConfig(abc.ABC, BaseModel):
-    action: str
-
-
-class MovePostprocessConfig(PostprocessConfig):
+class MovePostprocessConfig(BaseModel):
     action: str = "move"
     fid: str
 
 
-class RemovePostprocessConfig(PostprocessConfig):
+class RemovePostprocessConfig(BaseModel):
     action: str = "remove"
+
+
+type PostprocessConfigT = MovePostprocessConfig | RemovePostprocessConfig
 
 
 class FavoriteListConfig(BaseModel):
     fid: str
     path: str
-    postprocess: list[PostprocessConfig] | None = None
+    postprocess: list[PostprocessConfigT] | None = None
 
 
 class Config(BaseModel):
@@ -86,10 +87,10 @@ class Config(BaseModel):
     favorite_list: dict[str, FavoriteListConfig]
 
 
-def _post_process_match(value: dict) -> PostprocessConfig:
+def _post_process_match(value: dict) -> MovePostprocessConfig | RemovePostprocessConfig:
     match value["action"]:
         case "move":
-            return MovePostprocessConfig(fid=value["fid"])
+            return MovePostprocessConfig(fid=str(value["fid"]))
         case "remove":
             return RemovePostprocessConfig()
 

@@ -1,6 +1,6 @@
 import sqlite3
 
-from .configs import Config
+from blsync.configs import Config
 
 
 class SQLiteManager:

@@ -1,7 +1,8 @@
+from typing import AsyncGenerator
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
 
-from .configs import Config
+from blsync.configs import Config
 
 
 class BScraper:
@@ -18,7 +19,9 @@ class BScraper:
             ac_time_value=config.credential.ac_time_value,
         )
 
-    async def _get_bvids_from_favid(self, favid: str):
+    async def _get_bvids_from_favid(
+        self, favid: str
+    ) -> AsyncGenerator[str | None, None]:
         """
         获取收藏夹下面的所有视频bvid，如果有未下载的新视频会更新字典
 
@@ -37,23 +40,15 @@ class BScraper:
             logger.exception(e)
             yield None
 
-    async def get_all_bvids(self):
-        for favid, config in self.config.favorite_list.items():
-            # 跳过非收藏夹和复杂配置中的非收藏夹
-            if int(favid) < 0:
+    async def get_all_bvids(self) -> AsyncGenerator[tuple[str | None, str], None]:
+        for task_name, config in self.config.favorite_list.items():
+            if task_name == "-1":
                 continue
-
-            # # 如果是复杂配置格式，需要从dict中获取实际的fid
-            # actual_favid = favid
-            # if isinstance(config, dict) and "fid" in config:
-            #     actual_favid = str(config["fid"])
-            #     if not favid.isdigit() or (favid.isdigit() and int(actual_favid)) < 0:
-            #         continue
 
             async for bvid in self._get_bvids_from_favid(config.fid):
                 if not bvid:
                     continue
-                yield bvid, config.fid
+                yield bvid, task_name
 
     # async def get_video_info(self, bvid):
     #     v = video.Video(bvid=bvid, credential=self.credential)
