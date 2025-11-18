@@ -1,8 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel
 
@@ -169,13 +171,30 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+BASE_DIR = Path(__file__).parents[2]
+STATIC_DIR = BASE_DIR / "static"
+
+
+@app.get("/", tags=["前端"], summary="前端页面")
+async def read_root() -> FileResponse:
+    """
+    返回前端页面
+
+    访问此接口将返回 BLSync 的前端管理界面，用于提交 Bilibili 视频下载任务。
+    """
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file), media_type="text/html")
+    else:
+        raise HTTPException(status_code=404, detail="Frontend page not found")
+
 
 class TaskRequest(BaseModel):
     bid: str
     favid: str = -1  # 默认值为-1表示没有收藏夹id
 
 
-@app.post("/tasks/")
+@app.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
 async def create_task(task: TaskRequest):
     try:
         config = get_global_configs()
@@ -208,10 +227,10 @@ async def create_task(task: TaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/tasks/status")
+@app.get("/tasks/status", tags=["任务"], summary="获取任务队列状态")
 async def get_task_status():
     """
-    获取任务队列状态
+    获取当前任务队列的状态信息，包括队列大小、等待中的任务和正在处理的任务。
     """
     return {
         "queue_size": task_queue.qsize(),

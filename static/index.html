@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLSync - Bilibili 视频下载任务</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            margin-bottom: 8px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+            outline: none;
+        }
+
+        input[type="text"]:focus {
+            border-color: #667eea;
+        }
+
+        input[type="text"]::placeholder {
+            color: #999;
+        }
+
+        .help-text {
+            color: #666;
+            font-size: 12px;
+            margin-top: 6px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message {
+            margin-top: 20px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BLSync</h1>
+        <p class="subtitle">Bilibili 视频下载任务提交</p>
+        
+        <form id="taskForm">
+            <div class="form-group">
+                <label for="videoUrl">视频链接或 BV 号</label>
+                <input 
+                    type="text" 
+                    id="videoUrl" 
+                    name="videoUrl" 
+                    placeholder="例如: https://www.bilibili.com/video/BV1xx411c7mu 或 BV1xx411c7mu"
+                    required
+                >
+                <div class="help-text">支持完整链接、短链接或直接输入 BV 号</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="favid">收藏夹 ID（可选）</label>
+                <input 
+                    type="text" 
+                    id="favid" 
+                    name="favid" 
+                    placeholder="留空则使用默认值 -1"
+                >
+                <div class="help-text">如果不填写，将使用默认值 -1</div>
+            </div>
+            
+            <button type="submit" id="submitBtn">提交任务</button>
+        </form>
+        
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        // 从 Bilibili 链接中提取 BV 号
+        function extractBVID(url) {
+            if (!url) return null;
+            
+            // 去除首尾空格
+            url = url.trim();
+            
+            // 如果直接是 BV 号格式
+            const bvMatch = url.match(/^BV[a-zA-Z0-9]+$/i);
+            if (bvMatch) {
+                return bvMatch[0];
+            }
+            
+            // 从完整链接中提取
+            // 匹配 https://www.bilibili.com/video/BVxxxxx 或 https://bilibili.com/video/BVxxxxx
+            const fullUrlMatch = url.match(/bilibili\.com\/video\/(BV[a-zA-Z0-9]+)/i);
+            if (fullUrlMatch) {
+                return fullUrlMatch[1];
+            }
+            
+            // 匹配短链接 https://b23.tv/xxxxx (需要跳转后才能获取，这里先返回 null)
+            // 实际应用中可能需要先解析短链接
+            if (url.includes('b23.tv')) {
+                return null; // 短链接需要额外处理
+            }
+            
+            return null;
+        }
+
+        // 显示消息
+        function showMessage(text, type) {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+            
+            // 3秒后自动隐藏成功和提示消息
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    messageEl.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // 隐藏消息
+        function hideMessage() {
+            const messageEl = document.getElementById('message');
+            messageEl.style.display = 'none';
+        }
+
+        // 表单提交处理
+        document.getElementById('taskForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const videoUrl = document.getElementById('videoUrl').value;
+            const favid = document.getElementById('favid').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            
+            // 提取 BV 号
+            const bid = extractBVID(videoUrl);
+            
+            if (!bid) {
+                showMessage('无法从输入中提取 BV 号，请检查链接格式', 'error');
+                return;
+            }
+            
+            // 准备请求数据
+            const requestData = {
+                bid: bid,
+                favid: favid || '-1'
+            };
+            
+            // 禁用按钮并显示加载状态
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="loading"></span>提交中...';
+            hideMessage();
+            
+            try {
+                const response = await fetch('/task/bili', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.status === 'success') {
+                        showMessage(data.message || `任务 ${bid} 已成功添加到队列`, 'success');
+                        // 清空输入框
+                        document.getElementById('videoUrl').value = '';
+                        document.getElementById('favid').value = '';
+                    } else if (data.status === 'already_queued') {
+                        showMessage(data.message || `任务 ${bid} 已在队列中或正在处理`, 'info');
+                    } else if (data.status === 'already_downloaded') {
+                        showMessage(data.message || `视频 ${bid} 已下载`, 'info');
+                    } else {
+                        showMessage(data.message || '任务提交成功', 'success');
+                    }
+                } else {
+                    showMessage(data.detail || '提交失败，请稍后重试', 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage('网络错误，请检查后端服务是否正常运行', 'error');
+            } finally {
+                // 恢复按钮状态
+                submitBtn.disabled = false;
+                submitBtn.textContent = '提交任务';
+            }
+        });
+    </script>
+</body>
+</html>
+
