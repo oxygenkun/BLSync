@@ -124,6 +124,12 @@ class BiliVideoTask(Task):
         await self.execute_postprocess()
 
     async def execute_postprocess(self) -> None:
+        postprocess_configs = self._task_context.config.favorite_list.get(
+            self._task_context.task_name, None
+        )
+        if not postprocess_configs or not postprocess_configs.postprocess:
+            return
+
         postprocess_configs = self._task_context.config.favorite_list[
             self._task_context.task_name
         ].postprocess

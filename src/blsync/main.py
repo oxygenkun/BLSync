@@ -180,9 +180,10 @@ async def create_task(task: TaskRequest):
     try:
         config = get_global_configs()
         # 创建任务实例
-        task_instance = BiliVideoTaskContext(
-            config=config, bid=task.bid, favid=task.favid
+        task_context = BiliVideoTaskContext(
+            config=config, bid=task.bid, task_name=task.favid
         )
+        task_instance = BiliVideoTask(task_context)
         task_key = task_instance.get_task_key()
 
         # Check if task is already queued or being processed
@@ -201,7 +202,7 @@ async def create_task(task: TaskRequest):
 
         # Add to queued tasks and put in queue
         queued_tasks.add(task_key)
-        await task_queue.put(task_instance)
+        await task_queue.put(task_context)
         return {"status": "success", "message": f"Task {task.bid} added to queue"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
