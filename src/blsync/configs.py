@@ -121,7 +121,7 @@ def load_configs(args=None) -> Config:
                     fid=str(value["fid"]),
                     path=value["path"],
                     name=value.get("name"),
-                    postprocess=[_post_process_match(p) for p in value["postprocess"]],
+                    postprocess=[_post_process_match(p) for p in value.get("postprocess", [])],
                 )
             else:
                 raise ValueError(f"Invalid favorite_list configuration: {value}")
