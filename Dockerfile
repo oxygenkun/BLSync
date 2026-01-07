@@ -8,6 +8,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # install tools
 RUN apk update && apk add --no-cache ffmpeg
+
+# create user with specified UID/GID
+RUN addgroup -g ${GID} appuser && \
+    adduser -u ${UID} -G appuser -D -s /bin/sh appuser
 COPY --from=ghcr.io/astral-sh/uv:0.8.14 /uv /uvx /bin/
 
 # copy files
@@ -19,6 +23,12 @@ WORKDIR /app
 RUN uv sync --locked --no-editable \
     && uv tool install yutto \
     && uv cache clean
+
+# change ownership of /app to appuser
+RUN chown -R appuser:appuser /app
+
+# switch to non-root user
+USER appuser
 
 CMD [ "uv", "run", "bs", "-c", "/app/config/config.toml" ]
 
