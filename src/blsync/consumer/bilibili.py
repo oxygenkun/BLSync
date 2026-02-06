@@ -15,7 +15,7 @@ from bilibili_api.favorite_list import (
 )
 from bilibili_api.video import Video
 from loguru import logger
-from yutto.processor.path_resolver import repair_filename
+from yutto.path_templates import repair_filename
 
 from blsync import get_global_configs
 from blsync.configs import (
