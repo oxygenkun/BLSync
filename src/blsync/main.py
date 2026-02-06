@@ -246,16 +246,4 @@ def start_server():
 
 
 if __name__ == "__main__":
-    # start_server()
-    asyncio.run(start_background_tasks())
-
-# 使用示例（在main.py中可以这样导入和使用不同的任务类型）:
-#
-# from .consumer.bilibili import BiliVideoTaskContext
-# from .consumer.audio import AudioTaskContext
-# from .consumer.playlist import PlaylistTaskContext
-#
-# # 创建不同类型的任务：
-# video_task = BiliVideoTaskContext(config=config, bid="BV123", favid="456")
-# audio_task = AudioTaskContext(config=config, bid="BV123", favid="456", audio_quality="320k")
-# playlist_task = PlaylistTaskContext(config=config, playlist_id="PL123")
+    start_server()
