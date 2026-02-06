@@ -1,6 +1,7 @@
 [project]
 name = "BLSync"
 version = "0.3.0"
+requires-python = ">=3.13"
 description = "BLSync is for syncing your bilibili favorite list to local."
 authors = [
     {name = "oxygenkun", email = "oxygenkun.1@gmail.com"}
@@ -16,7 +17,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Multimedia :: Video",
@@ -36,7 +36,6 @@ dependencies = [
     "pydantic>=2.11.7",
 ]
 readme = "README.md"
-requires-python = ">= 3.12"
 
 [project.urls]
 Homepage = "https://github.com/oxygenkun/BLSync"
@@ -48,7 +47,7 @@ Changelog = "https://github.com/oxygenkun/BLSync/releases"
 [project.scripts]
 bs = 'blsync.main:start_server'
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "ruff>=0.7.3",
     "pytest>=8.3.3",
@@ -61,7 +60,6 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
-dev-dependencies = ["ruff>=0.7.3", "pytest>=8.3.3", "pytest-asyncio>=0.24.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
