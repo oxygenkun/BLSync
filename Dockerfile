@@ -12,7 +12,7 @@ RUN apk update && apk add --no-cache ffmpeg
 # create user with specified UID/GID
 RUN addgroup -g ${GID} appuser && \
     adduser -u ${UID} -G appuser -D -s /bin/sh appuser
-COPY --from=ghcr.io/astral-sh/uv:0.8.14 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # copy files
 COPY pyproject.toml uv.lock README.md /app/
