@@ -6,13 +6,9 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
-from blsync.configs import Config
-
 
 class TaskContext(BaseModel, ABC):
     """任务上下文基类"""
-
-    config: Config
 
     # @abstractmethod
     # async def execute(self) -> None:

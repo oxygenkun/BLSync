@@ -1,6 +1,6 @@
 import pytest
 
-from blsync.configs import load_configs, Config
+from blsync.configs import Config, load_configs
 from blsync.scraper import BScraper
 
 

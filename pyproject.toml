@@ -34,6 +34,8 @@ dependencies = [
     "yutto>=2.0.3",
     "pydantic-settings>=2.10.1",
     "pydantic>=2.11.7",
+    "sqlalchemy>=2.0.36",
+    "aiosqlite>=0.20.0",
 ]
 readme = "README.md"
 

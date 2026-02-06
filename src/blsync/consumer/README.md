@@ -18,7 +18,7 @@ consumer/
 
 ### 1. 基础抽象类 (`base.py`)
 
-- **`TaskContext`**: 任务上下文基类，包含配置信息
+- **`TaskContext`**: 任务上下文基类，包含任务特定的参数
 - **`Task`**: 任务执行基类，定义任务执行接口
 - **`Postprocess`**: 后处理基类，定义任务完成后的处理逻辑
 
@@ -54,7 +54,8 @@ consumer/
 
 ```python
 # 在 main.py 中创建任务上下文
-context = BiliVideoTaskContext(config=config, bid=bvid, task_name=task_name)
+# 注意: config 现在是全局变量，通过 get_global_configs() 获取
+context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
 ```
 
 ### 2. 任务分发

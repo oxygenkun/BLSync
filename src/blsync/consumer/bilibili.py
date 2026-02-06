@@ -17,7 +17,7 @@ from bilibili_api.video import Video
 from loguru import logger
 from yutto.processor.path_resolver import repair_filename
 
-# from blsync import get_global_configs
+from blsync import get_global_configs
 from blsync.configs import (
     Config,
     ConfigCredential,
@@ -25,9 +25,7 @@ from blsync.configs import (
     RemovePostprocessConfig,
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
-from blsync.db_access import already_download_bvids, already_download_bvids_add
-
-# from blsync.postprocessor import PostProcessor
+from blsync.db_access import already_download_bvids
 from blsync.scraper import BScraper
 
 
@@ -74,7 +72,7 @@ class BiliVideoTask(Task):
         """Execute video download task"""
         bid = self._task_context.bid
         task_name = self._task_context.task_name
-        configs = self._task_context.config
+        configs = get_global_configs()
 
         if bid in already_download_bvids(media_id=bid, configs=configs):
             logger.info(f"Already downloaded {bid}")
@@ -124,13 +122,14 @@ class BiliVideoTask(Task):
         await self.execute_postprocess()
 
     async def execute_postprocess(self) -> None:
-        postprocess_configs = self._task_context.config.favorite_list.get(
+        configs = get_global_configs()
+        postprocess_configs = configs.favorite_list.get(
             self._task_context.task_name, None
         )
         if not postprocess_configs or not postprocess_configs.postprocess:
             return
 
-        postprocess_configs = self._task_context.config.favorite_list[
+        postprocess_configs = configs.favorite_list[
             self._task_context.task_name
         ].postprocess
 
@@ -164,7 +163,7 @@ class BiliVideoPostprocessMove(Postprocess):
     async def execute(self) -> None:
         bid = self._task_context.bid
         tasks_name = self._task_context.task_name
-        configs = self._task_context.config
+        configs = get_global_configs()
         credential = credential_from_config(configs.credential)
 
         aid = await aid_from_bvid(bid, credential)
@@ -187,13 +186,14 @@ class BiliVideoPostprocessRemove(Postprocess):
         self._task_context = task_context
 
     async def execute(self) -> None:
-        aid = await aid_from_bvid(self._task_context.bid, self.config.credential)
+        configs = get_global_configs()
+        aid = await aid_from_bvid(self._task_context.bid, configs.credential)
         tasks_name = self._task_context.task_name
-        fid = self._task_context.favorite_list[tasks_name].fid
+        fid = configs.favorite_list[tasks_name].fid
         await delete_video_favorite_list_content(
             media_id=fid,
             aids=[aid],
-            credential=self.config.credential,
+            credential=configs.credential,
         )
         logger.debug(f"Removed video {aid} from {fid}")
 
