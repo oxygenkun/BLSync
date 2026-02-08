@@ -39,7 +39,7 @@ def get_task_dal() -> TaskDAL:
     return _task_dal
 
 
-def get_semaphore():
+def get_semaphore() -> asyncio.Semaphore:
     global _semaphore
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(get_global_configs().max_concurrent_tasks)
@@ -76,13 +76,13 @@ async def process_single_task(task: Task, task_key_str: str):
 
         except asyncio.TimeoutError:
             error_msg = f"Task {(bvid, favid)} timed out after {config.task_timeout}s"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             await task_dal.update_task_status(
                 task_key_str, TaskStatus.FAILED, error_msg
             )
         except Exception as e:
             error_msg = f"Error processing task {(bvid, favid)}: {e}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             await task_dal.update_task_status(
                 task_key_str, TaskStatus.FAILED, error_msg
             )
@@ -118,7 +118,7 @@ async def task_consumer():
                 # Deserialize task context and create task instance
                 task_context_dict = task_model.task_context_dict
                 # Remove 'config' key if it exists (for backward compatibility)
-                task_context_dict.pop('config', None)
+                task_context_dict.pop("config", None)
                 context = BiliVideoTaskContext(**task_context_dict)
                 task = BiliVideoTask(context)
 
@@ -146,6 +146,7 @@ async def task_producer():
     1. 检查数据库中是否已存在该任务
     2. 检查视频是否已下载
     """
+    logger.info("[task_producer] Starting task producer")
     config = get_global_configs()
     bs = get_scraper()
     task_dal = get_task_dal()
@@ -154,9 +155,7 @@ async def task_producer():
         try:
             async for bvid, task_name in bs.get_all_bvids():
                 # 创建任务上下文
-                context = BiliVideoTaskContext(
-                    bid=bvid, task_name=task_name
-                )
+                context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
 
                 # Check if task already exists in database
                 if await task_dal.bili_video_task_exists(bvid, task_name):
@@ -203,7 +202,9 @@ async def cleanup_stale_tasks():
 
             # Check each favorite list
             for favid in config.favorite_list.keys():
-                downloaded_bvids = already_download_bvids(media_id=favid, configs=config)
+                downloaded_bvids = already_download_bvids(
+                    media_id=favid, configs=config
+                )
 
                 # Clean up stale tasks
                 deleted_keys = await task_dal.cleanup_stale_tasks(
@@ -246,6 +247,7 @@ async def lifespan(app: FastAPI):
     """
     启动Web服务前，启动后台任务
     """
+    logger.info("Starting background tasks...")
     tasks = asyncio.create_task(start_background_tasks())
     yield
     tasks.cancel()
@@ -294,9 +296,7 @@ async def create_task(task: TaskRequest):
         task_dal = get_task_dal()
 
         # 创建任务上下文
-        task_context = BiliVideoTaskContext(
-            bid=task.bid, task_name=task.favid
-        )
+        task_context = BiliVideoTaskContext(bid=task.bid, task_name=task.favid)
 
         # Check if task already exists
         if await task_dal.bili_video_task_exists(task.bid, task.favid):

@@ -4,7 +4,9 @@ ARG UID=1000
 ARG GID=1000
 
 ENV UV_COMPILE_BYTECODE=1 \
-    PATH=/root/.local/bin:$PATH
+    PATH=/root/.local/bin:$PATH \
+    UV_CACHE_DIR=/app/.cache/uv \
+    HOME=/app
 
 # install tools
 RUN apk update && apk add --no-cache ffmpeg
@@ -15,7 +17,7 @@ RUN addgroup -g ${GID} appuser && \
 COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # copy files
-COPY pyproject.toml uv.lock README.md /app/
+COPY pyproject.toml uv.lock README.md static/index.html /app/
 COPY src /app/src/
 
 # install dependencies and project
@@ -24,12 +26,15 @@ RUN uv sync --locked --no-editable \
     && uv tool install yutto \
     && uv cache clean
 
+# create cache directory with proper permissions
+RUN mkdir -p /app/.cache/uv
+
 # change ownership of /app to appuser
 RUN chown -R appuser:appuser /app
 
 # switch to non-root user
 USER appuser
 
-CMD [ "uv", "run", "bs", "-c", "/app/config/config.toml" ]
+CMD [ "uv", "run", "--no-sync", "bs", "-c", "/app/config/config.toml" ]
 
 EXPOSE 8000
