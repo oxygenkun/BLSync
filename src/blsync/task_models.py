@@ -2,22 +2,34 @@
 
 import enum
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Index, String, Text, func, select
+from sqlalchemy import (
+    DateTime,
+    Index,
+    String,
+    Text,
+    delete,
+    event,
+    func,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class TaskType(str, enum.Enum):
     """Task type enumeration."""
+
     BILI_VIDEO = "bili_video"
     # Add more task types here in the future
 
 
 class TaskStatus(str, enum.Enum):
     """Task status enumeration."""
+
     PENDING = "pending"
     EXECUTING = "executing"
     COMPLETED = "completed"
@@ -26,6 +38,7 @@ class TaskStatus(str, enum.Enum):
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
+
     pass
 
 
@@ -44,6 +57,7 @@ class TaskModel(Base):
         completed_at: Task completion timestamp (optional)
         error_message: Error message if task failed (optional)
     """
+
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -51,9 +65,7 @@ class TaskModel(Base):
     task_key: Mapped[str] = mapped_column(String(500))
     task_data: Mapped[str] = mapped_column(Text())
     status: Mapped[str] = mapped_column(String(20), default=TaskStatus.PENDING.value)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(), default=datetime.utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(), default=datetime.utcnow, onupdate=datetime.utcnow
     )
@@ -164,7 +176,30 @@ class TaskDAL:
         Args:
             db_url: Database URL for SQLAlchemy connection
         """
-        self.engine = create_async_engine(db_url, echo=False)
+        self.db_url = db_url
+        self.engine = create_async_engine(
+            db_url,
+            echo=False,
+            pool_pre_ping=True,
+        )
+
+        # Set up SQLite PRAGMA commands on new connections
+        if db_url.startswith("sqlite"):
+
+            @event.listens_for(self.engine.sync_engine, "connect")
+            def _set_sqlite_pragma(dbapi_conn, _connection_record):
+                """Set SQLite PRAGMA commands on new connections."""
+                cursor = dbapi_conn.cursor()
+                try:
+                    # Enable WAL mode for better concurrency
+                    cursor.execute("PRAGMA journal_mode=WAL;")
+                    # Enable foreign keys
+                    cursor.execute("PRAGMA foreign_keys=ON;")
+                    # Set busy timeout to 20 seconds
+                    cursor.execute("PRAGMA busy_timeout=20000;")
+                except Exception:
+                    pass  # Ignore errors for non-SQLite databases
+
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
@@ -220,7 +255,7 @@ class TaskDAL:
         async with self.async_session() as session:
             stmt = select(TaskModel).where(TaskModel.task_key == task_key)
             result = await session.execute(stmt)
-            return result.scalars().first()
+            return result.scalar_one_or_none()
 
     async def bili_video_task_exists(self, bvid: str, favid: str) -> bool:
         """
@@ -244,7 +279,7 @@ class TaskDAL:
         error_message: str | None = None,
     ) -> TaskModel | None:
         """
-        Update task status.
+        Update task status using native async update statement.
 
         Args:
             task_key: Task key JSON string
@@ -255,22 +290,25 @@ class TaskDAL:
             Updated TaskModel instance if found, None otherwise
         """
         async with self.async_session() as session:
-            stmt = select(TaskModel).where(TaskModel.task_key == task_key)
+            # Build update values
+            values: dict[str, Any] = {"status": status.value}
+            if status == TaskStatus.COMPLETED:
+                values["completed_at"] = datetime.now(timezone.utc)
+                values["error_message"] = None
+            elif status == TaskStatus.FAILED:
+                values["error_message"] = error_message
+
+            # Execute update statement
+            stmt = (
+                update(TaskModel)
+                .where(TaskModel.task_key == task_key)
+                .values(**values)
+                .returning(TaskModel)
+            )
             result = await session.execute(stmt)
-            task = result.scalars().first()
+            await session.commit()
 
-            if task:
-                task.status = status.value
-                if status == TaskStatus.COMPLETED:
-                    task.completed_at = datetime.utcnow()
-                    task.error_message = None
-                elif status == TaskStatus.FAILED:
-                    task.error_message = error_message
-
-                await session.commit()
-                await session.refresh(task)
-
-            return task
+            return result.scalars().first()
 
     async def get_tasks_by_status(self, status: TaskStatus) -> list[TaskModel]:
         """
@@ -298,10 +336,11 @@ class TaskDAL:
             List of pending TaskModel instances
         """
         async with self.async_session() as session:
-            stmt = select(TaskModel).where(
-                TaskModel.status == TaskStatus.PENDING.value
-            ).order_by(TaskModel.created_at)
-
+            stmt = (
+                select(TaskModel)
+                .where(TaskModel.status == TaskStatus.PENDING.value)
+                .order_by(TaskModel.created_at)
+            )
             if limit:
                 stmt = stmt.limit(limit)
 
@@ -329,7 +368,7 @@ class TaskDAL:
 
     async def delete_task(self, task_key: str) -> bool:
         """
-        Delete a task by its unique key.
+        Delete a task by its unique key using native async delete statement.
 
         Args:
             task_key: Task key JSON string
@@ -338,14 +377,14 @@ class TaskDAL:
             True if task was deleted, False if not found
         """
         async with self.async_session() as session:
-            task = await self.get_task_by_key(task_key)
-
-            if task:
-                await session.delete(task)
-                await session.commit()
-                return True
-
-            return False
+            stmt = (
+                delete(TaskModel)
+                .where(TaskModel.task_key == task_key)
+                .returning(TaskModel.id)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.scalar_one_or_none() is not None
 
     async def cleanup_stale_tasks(
         self, downloaded_bvids: set[str], favid: str
@@ -371,11 +410,14 @@ class TaskDAL:
                 ),
             )
             result = await session.execute(stmt)
-            tasks = result.scalars().all()
+            tasks = list(result.scalars().all())
 
             for task in tasks:
                 key_dict = task.key_dict
-                if key_dict.get("favid") == favid and key_dict.get("bvid") in downloaded_bvids:
+                if (
+                    key_dict.get("favid") == favid
+                    and key_dict.get("bvid") in downloaded_bvids
+                ):
                     deleted_keys.append((key_dict["bvid"], key_dict["favid"]))
                     await session.delete(task)
 

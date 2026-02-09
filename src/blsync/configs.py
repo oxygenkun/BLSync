@@ -1,4 +1,3 @@
-import abc
 import argparse
 import pathlib
 
@@ -54,6 +53,9 @@ class ConfigCredential(BaseModel):
     dedeuserid: str | None = None
     ac_time_value: str | None = None
 
+    def __hash__(self) -> int:
+        return hash(tuple(self.model_dump().values()))
+
 
 class MovePostprocessConfig(BaseModel):
     action: str = "move"
@@ -94,6 +96,8 @@ def _post_process_match(value: dict) -> MovePostprocessConfig | RemovePostproces
             return MovePostprocessConfig(fid=str(value["fid"]))
         case "remove":
             return RemovePostprocessConfig()
+        case _ as known:
+            raise Exception(f"Unknown post-process action: {known}")
 
 
 def load_configs(args=None) -> Config:
@@ -121,7 +125,9 @@ def load_configs(args=None) -> Config:
                     fid=str(value["fid"]),
                     path=value["path"],
                     name=value.get("name"),
-                    postprocess=[_post_process_match(p) for p in value.get("postprocess", [])],
+                    postprocess=[
+                        _post_process_match(p) for p in value.get("postprocess", [])
+                    ],
                 )
             else:
                 raise ValueError(f"Invalid favorite_list configuration: {value}")

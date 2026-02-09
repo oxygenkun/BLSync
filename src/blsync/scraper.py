@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
 
@@ -28,7 +29,7 @@ class BScraper:
         :param media_id: 收藏夹id
         """
         fav_list = favorite_list.FavoriteList(
-            media_id=favid, credential=self.credential
+            media_id=int(favid), credential=self.credential
         )
 
         # TODO 增量获取，不会重复获取已经下载的视频
@@ -40,7 +41,7 @@ class BScraper:
             logger.exception(e)
             yield None
 
-    async def get_all_bvids(self) -> AsyncGenerator[tuple[str | None, str], None]:
+    async def get_all_bvids(self) -> AsyncGenerator[tuple[str, str], None]:
         for task_name, config in self.config.favorite_list.items():
             if task_name == "-1":
                 continue

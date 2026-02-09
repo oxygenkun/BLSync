@@ -4,6 +4,7 @@ Bilibili消费者模块 - 处理Bilibili相关的下载任务
 
 import asyncio
 import pathlib
+import sys
 from datetime import datetime
 from functools import lru_cache
 
@@ -15,8 +16,8 @@ from bilibili_api.favorite_list import (
 )
 from bilibili_api.video import Video
 from loguru import logger
-from yutto.path_templates import repair_filename
 
+# from yutto.path_templates import repair_filename
 from blsync import get_global_configs
 from blsync.configs import (
     Config,
@@ -25,7 +26,6 @@ from blsync.configs import (
     RemovePostprocessConfig,
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
-from blsync.db_access import already_download_bvids
 from blsync.scraper import BScraper
 
 
@@ -41,6 +41,10 @@ class BiliVideoTask(Task):
 
     def __init__(self, task_context: BiliVideoTaskContext):
         self._task_context = task_context
+        self._config = get_global_configs()
+        self._fav_config = self._config.favorite_list.get(
+            self._task_context.task_name, self._config.favorite_list["-1"]
+        )
 
     def get_task_key(self) -> tuple:
         return (self._task_context.bid, self._task_context.task_name)
@@ -71,22 +75,15 @@ class BiliVideoTask(Task):
     async def execute(self) -> None:
         """Execute video download task"""
         bid = self._task_context.bid
-        task_name = self._task_context.task_name
-        configs = get_global_configs()
-
-        if bid in already_download_bvids(media_id=bid, configs=configs):
-            logger.info(f"Already downloaded {bid}")
-            return
 
         # 获取下载路径，支持简单和复杂配置格式
-        fav_config = configs.favorite_list[task_name]
-        fav_download_path = self._format_download_path(fav_config.path)
+        fav_download_path = self._format_download_path(self._fav_config.path)
 
         if not fav_download_path.parent.exists():
             fav_download_path.mkdir(parents=True, exist_ok=True)
 
         # 获取视频信息
-        bs = BScraper(configs)
+        bs = BScraper(self._config)
         v_info = await bs.get_video_info(bid)
         if v_info is None:
             logger.info(f"Failed to get video info for {bid}")
@@ -97,17 +94,18 @@ class BiliVideoTask(Task):
         if is_batch:
             logger.info(f"Video {bid} has {v_info['videos']} parts, using batch mode")
 
-        cover_path = pathlib.Path(
-            fav_download_path, repair_filename(f"{v_info['title']}.jpg")
-        )
+        # cover_path = pathlib.Path(
+        #     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
+        # )
 
         await asyncio.gather(
             download_video(
                 bvid=bid,
                 download_path=fav_download_path,
-                configs=configs,
+                sessdata=self._config.credential.sessdata,
                 is_batch=is_batch,
-                name_template=fav_config.name,
+                name_template=self._fav_config.name,
+                verbose=self._config.verbose,
             ),
             # download_file(v_info["pic"], cover_path),
         )
@@ -122,19 +120,11 @@ class BiliVideoTask(Task):
         await self.execute_postprocess()
 
     async def execute_postprocess(self) -> None:
-        configs = get_global_configs()
-        postprocess_configs = configs.favorite_list.get(
-            self._task_context.task_name, None
-        )
-        if not postprocess_configs or not postprocess_configs.postprocess:
+        if not self._fav_config.postprocess:
             return
 
-        postprocess_configs = configs.favorite_list[
-            self._task_context.task_name
-        ].postprocess
-
         postprocess_tasks = []
-        for post_config in postprocess_configs:
+        for post_config in self._fav_config.postprocess:
             match post_config:
                 case MovePostprocessConfig():
                     postprocess_tasks.append(
@@ -155,24 +145,30 @@ class BiliVideoPostprocessMove(Postprocess):
     """Bilibili视频后处理 - 移动到其他收藏夹"""
 
     def __init__(
-        self, task_context: BiliVideoTaskContext, post_config: MovePostprocessConfig
+        self,
+        task_context: BiliVideoTaskContext,
+        post_config: MovePostprocessConfig,
+        config: Config | None = None,
     ):
         self._task_context = task_context
         self._post_config = post_config
 
+        if not config:
+            config = get_global_configs()
+        self._config = config
+
     async def execute(self) -> None:
         bid = self._task_context.bid
         tasks_name = self._task_context.task_name
-        configs = get_global_configs()
-        credential = credential_from_config(configs.credential)
+        credential = credential_from_config(self._config.credential)
 
         aid = await aid_from_bvid(bid, credential)
-        from_fid = configs.favorite_list[tasks_name].fid
+        from_fid = self._config.favorite_list[tasks_name].fid
         to_fid = self._post_config.fid
 
         await move_video_favorite_list_content(
-            media_id_from=from_fid,
-            media_id_to=to_fid,
+            media_id_from=int(from_fid),
+            media_id_to=int(to_fid),
             aids=[aid],
             credential=credential,
         )
@@ -182,18 +178,25 @@ class BiliVideoPostprocessMove(Postprocess):
 class BiliVideoPostprocessRemove(Postprocess):
     """Bilibili视频后处理 - 从收藏夹中移除"""
 
-    def __init__(self, task_context: BiliVideoTaskContext):
+    def __init__(
+        self, task_context: BiliVideoTaskContext, config: Config | None = None
+    ):
         self._task_context = task_context
 
+        if not config:
+            config = get_global_configs()
+        self._config = config
+
     async def execute(self) -> None:
-        configs = get_global_configs()
-        aid = await aid_from_bvid(self._task_context.bid, configs.credential)
+        credential = credential_from_config(self._config.credential)
+
+        aid = await aid_from_bvid(self._task_context.bid, credential)
         tasks_name = self._task_context.task_name
-        fid = configs.favorite_list[tasks_name].fid
+        fid = self._config.favorite_list[tasks_name].fid
         await delete_video_favorite_list_content(
-            media_id=fid,
+            media_id=int(fid),
             aids=[aid],
-            credential=configs.credential,
+            credential=credential,
         )
         logger.debug(f"Removed video {aid} from {fid}")
 
@@ -220,10 +223,11 @@ async def aid_from_bvid(bvid: str, credential: Credential) -> int:
 async def download_video(
     bvid: str,
     download_path: pathlib.Path,
-    configs: Config | None = None,
+    sessdata: str | None = None,
     extra_list_options: list[str] | None = None,
     is_batch: bool = False,
     name_template: str | None = None,
+    verbose: bool = False,
 ) -> bool:
     """
     使用 yutto 下载视频。
@@ -233,48 +237,54 @@ async def download_video(
     :param download_path: 存放视频的文件夹路径
     :param is_batch: 是否为多分P视频，若为True则添加--batch参数
     """
+
     video_url = f"https://www.bilibili.com/video/{bvid}"
-    # fmt: off
+
     command = [
+        sys.executable,
+        "-m",
         "yutto",
-        "-c", configs.credential.sessdata,
-        "-d", str(download_path),
+        "-d",
+        str(download_path),
         "--no-danmaku",
         "--no-subtitle",
         "--with-metadata",
         "--save-cover",
         "--no-color",
         "--no-progress",
-        video_url,
     ]
-    # fmt: on
-
-    # 如果是多分P视频，添加--batch参数
+    if sessdata:
+        # 添加cookie
+        command.extend(["-c", sessdata])
+    else:
+        logger.warning("no sessdata")
     if is_batch:
-        command.insert(-1, "--batch")
+        # 如果是多分P视频，添加--batch参数
+        command.append("--batch")
         logger.info(f"Added --batch parameter for multi-part video {bvid}")
-
-    # 如果提供了name模板，添加--subpath-template参数
     if name_template:
+        # 如果提供了name模板，添加--subpath-template参数
         command.extend(["--subpath-template", name_template])
         logger.info(
             f"Added --subpath-template parameter with template: {name_template}"
         )
-
     if extra_list_options:
+        # 其他自定义参数
         command.extend(extra_list_options)
+    command.append(video_url)
 
-    logger.info(f"start downloading {bvid} with command: {' '.join(command)}")
+    logger.info(f"start downloading {bvid}")
+    logger.debug(f"run with command: {' '.join(command)}")
 
     proc = await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
 
-    if configs.verbose:
-        while not proc.stdout.at_eof():
-            if line := await proc.stdout.readline():
+    if verbose:
+        while proc.stdout and not proc.stdout.at_eof():
+            if proc.stdout and (line := await proc.stdout.readline()):
                 logger.info(line.decode().strip())
-            if err := await proc.stderr.readline():
+            if proc.stderr and (err := await proc.stderr.readline()):
                 logger.info(err.decode().strip())
     else:
         _, stderr = await proc.communicate()
