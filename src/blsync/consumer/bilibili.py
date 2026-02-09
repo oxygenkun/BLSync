@@ -212,7 +212,6 @@ def credential_from_config(config: ConfigCredential) -> Credential:
     )
 
 
-@lru_cache(maxsize=1000)
 async def aid_from_bvid(bvid: str, credential: Credential) -> int:
     """从bvid获取aid"""
     v = Video(bvid=bvid, credential=credential)

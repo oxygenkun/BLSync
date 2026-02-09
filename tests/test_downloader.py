@@ -1,7 +1,9 @@
-import pytest
 from pathlib import Path
-from blsync.configs import load_configs, Config
+
+import pytest
 from blsync.downloader import download_video
+
+from blsync.configs import Config, load_configs
 
 
 @pytest.fixture

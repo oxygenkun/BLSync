@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 
 from blsync.task_models import (
-    TaskDAL,
+    BiliVideoTaskDAL,
     TaskModel,
     TaskStatus,
     TaskType,
@@ -20,7 +20,7 @@ from blsync.task_models import (
 @pytest.mark.asyncio
 async def test_create_tables_in_memory():
     """Test creating tables in in-memory database."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     # Verify tables exist by querying
@@ -44,7 +44,7 @@ async def test_create_tables_file():
         # Ensure database file doesn't exist
         assert not db_path.exists(), "Database file should not exist initially"
 
-        dal = TaskDAL(db_url)
+        dal = BiliVideoTaskDAL(db_url)
         await dal.create_tables()
 
         # Verify database file was created
@@ -68,7 +68,7 @@ async def test_wal_mode_enabled():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
         db_url = f"sqlite+aiosqlite:///{db_path}"
-        dal = TaskDAL(db_url)
+        dal = BiliVideoTaskDAL(db_url)
 
         # Create tables which should enable WAL mode
         await dal.create_tables()
@@ -87,7 +87,7 @@ async def test_wal_mode_enabled():
 @pytest.mark.asyncio
 async def test_crud_operations():
     """Test basic CRUD operations on tasks."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     # Create a task
@@ -105,7 +105,7 @@ async def test_crud_operations():
     assert retrieved_task.id == task.id
 
     # Check if task exists
-    exists = await dal.bili_video_task_exists("BV123456", "fav123")
+    exists = await dal.has_bili_video_task("BV123456", "fav123")
     assert exists, "Task should exist"
 
     # Update task status
@@ -126,7 +126,7 @@ async def test_crud_operations():
     assert deleted, "Task should be deleted"
 
     # Verify deletion
-    exists_after = await dal.bili_video_task_exists("BV123456", "fav123")
+    exists_after = await dal.has_bili_video_task("BV123456", "fav123")
     assert not exists_after, "Task should not exist after deletion"
 
     await dal.close()
@@ -168,7 +168,7 @@ async def test_task_model_from_context():
 @pytest.mark.asyncio
 async def test_task_stats():
     """Test getting task statistics."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     # Create multiple tasks with different statuses
@@ -195,7 +195,7 @@ async def test_task_stats():
 @pytest.mark.asyncio
 async def test_get_pending_tasks_with_limit():
     """Test getting pending tasks with limit."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     # Create multiple tasks
@@ -216,7 +216,7 @@ async def test_get_pending_tasks_with_limit():
 @pytest.mark.asyncio
 async def test_cleanup_stale_tasks():
     """Test cleanup of already downloaded tasks."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     # Create tasks
@@ -228,16 +228,16 @@ async def test_cleanup_stale_tasks():
     downloaded_bvids = {"BV1", "BV2"}
 
     # Cleanup tasks for fav1
-    deleted_keys = await dal.cleanup_stale_tasks(downloaded_bvids, "fav1")
+    deleted_keys = await dal.delete_stale_tasks(downloaded_bvids, "fav1")
 
     assert len(deleted_keys) == 2, "Should delete 2 tasks from fav1"
     assert ("BV1", "fav1") in deleted_keys
     assert ("BV2", "fav1") in deleted_keys
 
     # Verify deletion
-    assert not await dal.bili_video_task_exists("BV1", "fav1")
-    assert not await dal.bili_video_task_exists("BV2", "fav1")
-    assert await dal.bili_video_task_exists("BV3", "fav2"), "BV3 should still exist"
+    assert not await dal.has_bili_video_task("BV1", "fav1")
+    assert not await dal.has_bili_video_task("BV2", "fav1")
+    assert await dal.has_bili_video_task("BV3", "fav2"), "BV3 should still exist"
 
     await dal.close()
 
@@ -245,7 +245,7 @@ async def test_cleanup_stale_tasks():
 @pytest.mark.asyncio
 async def test_concurrent_operations():
     """Test concurrent database operations don't cause issues."""
-    dal = TaskDAL("sqlite+aiosqlite:///:memory:")
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
     async def create_tasks(start: int, count: int):

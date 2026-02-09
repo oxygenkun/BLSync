@@ -167,6 +167,7 @@ class TaskDAL:
     Data Access Layer for Task operations.
 
     Provides async methods for CRUD operations on tasks.
+    This is the base class with common task operations.
     """
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///:memory:"):
@@ -218,30 +219,6 @@ class TaskDAL:
         """Get a new database session."""
         return self.async_session()
 
-    async def create_bili_video_task(
-        self,
-        bvid: str,
-        favid: str,
-        task_context: dict[str, Any],
-    ) -> TaskModel:
-        """
-        Create a new Bilibili video task.
-
-        Args:
-            bvid: Video ID
-            favid: Favorite list ID
-            task_context: Task context dictionary
-
-        Returns:
-            Created TaskModel instance
-        """
-        async with self.async_session() as session:
-            task = TaskModel.create_bili_video_task(bvid, favid, task_context)
-            session.add(task)
-            await session.commit()
-            await session.refresh(task)
-            return task
-
     async def get_task_by_key(self, task_key: str) -> TaskModel | None:
         """
         Get a task by its unique key.
@@ -256,21 +233,6 @@ class TaskDAL:
             stmt = select(TaskModel).where(TaskModel.task_key == task_key)
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
-
-    async def bili_video_task_exists(self, bvid: str, favid: str) -> bool:
-        """
-        Check if a Bilibili video task exists.
-
-        Args:
-            bvid: Video ID
-            favid: Favorite list ID
-
-        Returns:
-            True if task exists, False otherwise
-        """
-        task_key = make_bili_video_key(bvid, favid)
-        task = await self.get_task_by_key(task_key)
-        return task is not None
 
     async def update_task_status(
         self,
@@ -386,11 +348,81 @@ class TaskDAL:
             await session.commit()
             return result.scalar_one_or_none() is not None
 
-    async def cleanup_stale_tasks(
+    async def close(self):
+        """Close the database connection."""
+        await self.engine.dispose()
+
+
+class BiliVideoTaskDAL(TaskDAL):
+    """
+    Data Access Layer for Bilibili Video tasks.
+
+    Extends TaskDAL with Bilibili video-specific operations.
+    """
+
+    async def create_bili_video_task(
+        self,
+        bvid: str,
+        favid: str,
+        task_context: dict[str, Any],
+    ) -> TaskModel:
+        """
+        Create a new Bilibili video task.
+
+        Args:
+            bvid: Video ID
+            favid: Favorite list ID
+            task_context: Task context dictionary
+
+        Returns:
+            Created TaskModel instance
+        """
+        async with self.async_session() as session:
+            task = TaskModel.create_bili_video_task(bvid, favid, task_context)
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            return task
+
+    async def has_bili_video_task(self, bvid: str, favid: str) -> bool:
+        """
+        Check if a Bilibili video task exists.
+
+        Args:
+            bvid: Video ID
+            favid: Favorite list ID
+
+        Returns:
+            True if task exists, False otherwise
+        """
+        task_key = make_bili_video_key(bvid, favid)
+        task = await self.get_task_by_key(task_key)
+        return task is not None
+
+    async def get_bili_video_task_status(
+        self, bvid: str, favid: str
+    ) -> TaskStatus | None:
+        """
+        Get the status of a Bilibili video task.
+
+        Args:
+            bvid: Video ID
+            favid: Favorite list ID
+
+        Returns:
+            TaskStatus if task exists, None otherwise
+        """
+        task_key = make_bili_video_key(bvid, favid)
+        task = await self.get_task_by_key(task_key)
+        if task is None:
+            return None
+        return TaskStatus(task.status)
+
+    async def delete_stale_tasks(
         self, downloaded_bvids: set[str], favid: str
     ) -> list[tuple[str, str]]:
         """
-        Clean up Bilibili video tasks that are already downloaded.
+        Delete Bilibili video tasks that are already downloaded.
 
         Args:
             downloaded_bvids: Set of downloaded video IDs
@@ -425,6 +457,23 @@ class TaskDAL:
 
         return deleted_keys
 
-    async def close(self):
-        """Close the database connection."""
-        await self.engine.dispose()
+    async def get_completed_bvids(self, favid: str) -> set[str]:
+        """
+        Get all bvids for completed tasks in a favorite list.
+
+        Args:
+            favid: Favorite list ID
+
+        Returns:
+            Set of completed bvids
+        """
+        async with self.async_session() as session:
+            stmt = select(TaskModel).where(
+                TaskModel.task_type == TaskType.BILI_VIDEO.value,
+                TaskModel.status == TaskStatus.COMPLETED.value,
+            )
+            result = await session.execute(stmt)
+            tasks = list(result.scalars().all())
+
+            # Filter by favid and extract bvids
+            return {task.key_dict["bvid"] for task in tasks if task.key_dict.get("favid") == favid}
