@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-02-10
+
+### Added
+- 添加 Web 前端页面，支持通过浏览器提交 Bilibili 视频下载任务
+- 实现名称模板功能，支持自定义视频文件名格式
+- 添加全局配置延迟加载机制，优化启动性能
+- 使用 Pydantic 模型增强配置处理的类型安全性
+- 添加 Docker 镜像 CI/CD 工作流，自动化构建和发布
+- 添加 LLM 辅助开发指南文档
+
+### Changed
+- **重大更新**：升级 Python 版本至 3.13
+- 重构 API 路由，优化代码组织结构
+- 重构数据库访问层，优化数据库操作
+- 移除 downloader.py，将视频下载功能迁移到 Bilibili 消费者模块
+- 优化任务处理和后处理逻辑
+- 升级所有依赖到最新版本
+- 改进 Docker 配置，添加用户组支持
+- 优化配置文件模板结构和说明文档
+
+### Fixed
+- 修复任务调度时的状态更新问题
+- 修复配置中缺少 postprocess 键时的处理
+- 修复任务上下文处理逻辑
+- 修复 yutto 内部函数调用问题
+- 改进日志格式输出
+
+### Removed
+- 移除已弃用的数据库依赖
+- 移除注释掉的后处理代码
+
 ## [0.3.0] - 2025-09-01
 
 ### Added
@@ -102,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/oxygenkun/BLSync/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/oxygenkun/BLSync/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/oxygenkun/BLSync/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/oxygenkun/BLSync/compare/v0.1.1...v0.1.2

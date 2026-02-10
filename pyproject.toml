@@ -1,6 +1,6 @@
 [project]
 name = "BLSync"
-version = "0.3.0"
+version = "0.4.0"
 requires-python = ">=3.13"
 description = "BLSync is for syncing your bilibili favorite list to local."
 authors = [
