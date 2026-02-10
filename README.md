@@ -19,12 +19,15 @@
 
 ## Docker Compose 运行（推荐）
 
+> 你需要了解docker compose的基本用法。
+
 1. 创建目录结构
 
 ```bash
 mkdir blsync
 cd blsync
-mkdir config sync
+mkdir config/     # 配置和记录目录
+mkidr sync/       # 下载文件存储目录
 ```
 
 2. 创建 `compose.yaml` 文件
@@ -44,23 +47,13 @@ services:
     restart: unless-stopped
 ```
 
-> - `/app/config` ：[配置文件](#配置文件)所在目录，存储配置文件 `config.toml`；也是程序数据库默认存储位置
-> - `/app/sync` ：收藏夹视频默认存储位置
+3. 创建配置文件 `./config/config.toml`（内容写法在[配置文件](#配置文件)章节）
 
+4. 启动服务与常用命令
 
-3. 创建配置文件 `./config/config.toml`（参考[配置文件](#配置文件)章节）
-
-4. 启动服务
-
-```bash
+```shell
 # 启动服务（后台运行）
 docker compose up -d
-
-# 查看服务状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f
 
 # 停止服务
 docker compose down
@@ -68,31 +61,21 @@ docker compose down
 
 ## 源码运行
 
-1. 安装 `uv` 包管理器
+> 你需要在命令行环境安装uv、ffmpeg
 
-2. 安装 `ffmpeg`, `yutto`
-
-3. 安装项目依赖（使用可编辑模式）
-
-```bash
+```shell
+# 同步运行环境
 uv sync
-```
 
-4. 启动服务
-
-```bash
-# 使用 bs 命令启动
+# 启动服务
 uv run bs -c config/config.toml
-
-# 或使用 Python 模块方式启动
-uv run python -m blsync.main -c config/config.toml
 ```
 
 > `bs` 是项目提供的命令行工具，通过 pyproject.toml 中的 `[project.scripts]` 定义
 
 # 配置文件
 
-默认读取 `./config/config.toml` （参考模板文件 [`./config/config.template.toml`](./config/config.template.toml) 中的说明）。
+默认读取 `./config/config.toml` 文件 （参考模板文件 [`./config/config.template.toml`](./config/config.template.toml) 中的说明）。
 
 ## 收藏夹 id (fid) 获取方法
 
