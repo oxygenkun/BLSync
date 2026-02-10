@@ -20,10 +20,6 @@ bili_jct = "" # **必填项**
 # 用键值对表示，键是收藏夹id（fid），值是下载的存储路径
 # <fid> = "<download_path>"
 
-# ### 特殊示例：API接口的任务下载到"sync/"目录
-# fid为-1用来表示通过API接口收到的下载任务
--1 = "sync/"
-
 # ## 复杂模式
 # 1. 支持设置任务名
 # 2. 可以在下载后进行一些操作
@@ -43,6 +39,10 @@ bili_jct = "" # **必填项**
 # 
 # ### name 模板替换
 # yutto原生模板，参考 https://yutto.nyakku.moe/guide/cli/basic#%E5%AD%98%E6%94%BE%E5%AD%90%E8%B7%AF%E5%BE%84%E6%A8%A1%E6%9D%BF
+
+# ### 特殊示例：API接口的任务下载到"sync/"目录
+# fid为-1用来表示通过API接口收到的下载任务
+-1 = "sync/"
 
 # ### 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
 [favorite_list.task1]
