@@ -72,12 +72,23 @@ docker compose down
 
 2. 安装 `ffmpeg`, `yutto`
 
-3. 使用 `uv` 运行
+3. 安装项目依赖（使用可编辑模式）
 
 ```bash
 uv sync
-uv run bs -c config/config.toml
 ```
+
+4. 启动服务
+
+```bash
+# 使用 bs 命令启动
+uv run bs -c config/config.toml
+
+# 或使用 Python 模块方式启动
+uv run python -m blsync.main -c config/config.toml
+```
+
+> `bs` 是项目提供的命令行工具，通过 pyproject.toml 中的 `[project.scripts]` 定义
 
 # 配置文件
 

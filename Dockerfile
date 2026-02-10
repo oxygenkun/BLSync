@@ -1,19 +1,14 @@
 FROM python:3.13-alpine
 
-ARG UID=1000
-ARG GID=1000
-
-ENV UV_COMPILE_BYTECODE=1 \
-    PATH=/root/.local/bin:$PATH \
-    UV_CACHE_DIR=/app/.cache/uv \
+ENV PATH=/root/.local/bin:$PATH \
     HOME=/app
 
 # install tools
-RUN apk update && apk add --no-cache ffmpeg
+RUN apk update && apk add --no-cache ffmpeg su-exec
 
-# create user with specified UID/GID
-RUN addgroup -g ${GID} appuser && \
-    adduser -u ${UID} -G appuser -D -s /bin/sh appuser
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # copy files
@@ -23,18 +18,9 @@ COPY src /app/src/
 # install dependencies and project
 WORKDIR /app
 RUN uv sync --locked --no-editable \
-    && uv tool install yutto \
     && uv cache clean
 
-# create cache directory with proper permissions
-RUN mkdir -p /app/.cache/uv
-
-# change ownership of /app to appuser
-RUN chown -R appuser:appuser /app
-
-# switch to non-root user
-USER appuser
-
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD [ "uv", "run", "--no-sync", "bs", "-c", "/app/config/config.toml" ]
 
 EXPOSE 8000

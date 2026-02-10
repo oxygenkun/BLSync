@@ -1,8 +1,14 @@
 services:
   app:
     build: .
+    container_name: blsync-dev
     ports:
       - "8000:8000"
     volumes:
       - ./config:/app/config
       - ./sync:/app/sync
+    environment:
+      - TZ=Asia/Shanghai
+      - UID=${UID:-1000}
+      - GID=${GID:-1000}
+    restart: unless-stopped

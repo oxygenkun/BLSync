@@ -48,7 +48,7 @@ Issues = "https://github.com/oxygenkun/BLSync/issues"
 Changelog = "https://github.com/oxygenkun/BLSync/releases"
 
 [project.scripts]
-bs = 'blsync.main:start_server'
+bs = 'blsync.main:main'
 
 [dependency-groups]
 dev = [
