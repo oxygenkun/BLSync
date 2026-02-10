@@ -35,9 +35,6 @@ async def process_single_task(task: Task, task_key_str: str):
 
     async with get_semaphore():  # 限制并发数
         try:
-            # Update status to executing
-            await task_dal.update_task_status(task_key_str, TaskStatus.EXECUTING)
-
             # 添加超时控制
             await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
             logger.info(f"Task {(bvid, favid)} completed successfully")
@@ -82,6 +79,9 @@ async def task_consumer():
 
             # Process pending tasks
             for task_model in pending_tasks:
+                # Mark task as executing immediately when scheduled
+                await task_dal.update_task_status(task_model.task_key, TaskStatus.EXECUTING)
+
                 # Deserialize task context and create task instance
                 task_context_dict = task_model.task_context_dict
                 context = BiliVideoTaskContext(**task_context_dict)
@@ -92,7 +92,7 @@ async def task_consumer():
                 asyncio.create_task(process_single_task(task, task_model.task_key))
                 bvid, _ = parse_bili_video_key(task_model.task_key)
                 logger.info(
-                    f"[task_consumer] Started task {bvid}, "
+                    f"[task_consumer] Scheduled task {bvid}, "
                     f"{len(pending_tasks)} pending tasks remaining"
                 )
 
