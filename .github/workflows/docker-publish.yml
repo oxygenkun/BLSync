@@ -6,6 +6,7 @@ on:
       - main
     tags:
       - "v*.*.*"
+      - "dev-docker"
   pull_request:
     paths:
       - "Dockerfile"
@@ -25,21 +26,17 @@ jobs:
       contents: read
       packages: write
 
-    strategy:
-      matrix:
-        platform:
-          - linux/amd64
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64
 
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
@@ -55,15 +52,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # branch event
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
-            # tag event
-            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            # branch event - main branch
+            type=raw,value=main,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=main-{{sha}},enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            # tag event - version tags
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # tag event - dev-docker tag
+            type=raw,value=dev,enable=${{ github.ref == 'refs/tags/dev-docker' }}
+            type=raw,value=dev-{{sha}},enable=${{ github.ref == 'refs/tags/dev-docker' }}
             # PR event
             type=raw,value=pr-{{pr_number}},enable=${{ github.event_name == 'pull_request' }}
-            # commit hash for all events
-            type=sha,prefix={{branch}}-,format=short
           labels: |
             org.opencontainers.image.title=${{ github.event.repository.name }}
             org.opencontainers.image.description=Bilibili sync service
@@ -78,9 +78,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
