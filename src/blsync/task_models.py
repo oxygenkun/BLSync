@@ -558,3 +558,40 @@ class BiliVideoTaskDAL(TaskDAL):
 
             # Filter by favid and extract bvids
             return {task.key_dict["bvid"] for task in tasks if task.key_dict.get("favid") == favid}
+
+    async def update_bili_video_task(
+        self,
+        bvid: str,
+        favid: str,
+        task_context: dict[str, Any],
+        reset_status: bool = False,
+    ) -> TaskModel | None:
+        """
+        Update a Bilibili video task's context.
+
+        Args:
+            bvid: Video ID
+            favid: Favorite list ID
+            task_context: New task context dictionary
+            reset_status: If True, reset status to PENDING (useful for retrying failed tasks)
+
+        Returns:
+            Updated TaskModel instance if found, None otherwise
+        """
+        task_key = make_bili_video_key(bvid, favid)
+        async with self.async_session() as session:
+            stmt = select(TaskModel).where(TaskModel.task_key == task_key)
+            result = await session.execute(stmt)
+            task = result.scalar_one_or_none()
+
+            if task is None:
+                return None
+
+            task.task_data = json.dumps(task_context)
+            if reset_status:
+                task.status = TaskStatus.PENDING.value
+                task.error_message = None
+
+            await session.commit()
+            await session.refresh(task)
+            return task

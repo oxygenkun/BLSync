@@ -57,8 +57,9 @@ async def create_task(task: TaskRequest):
 
     任务创建逻辑：
     1. 检查数据库中是否已存在该任务
-    2. 检查视频是否已下载
-    3. 创建新任务到数据库
+    2. 若存在且指定了selected_episodes，更新任务上下文
+    3. 若存在且状态为FAILED/COMPLETED，重置为PENDING
+    4. 若不存在，创建新任务到数据库
     """
     try:
         task_dal = get_task_dal()
@@ -75,19 +76,28 @@ async def create_task(task: TaskRequest):
             task_context_dict["selected_episodes"] = task.selected_episodes
 
         # Check if task already exists
-        if await task_dal.has_bili_video_task(task.bid, task.favid):
-            return {
-                "status": "already_queued",
-                "message": f"Task {task.bid} is already in database",
-            }
+        existing_status = await task_dal.get_bili_video_task_status(task.bid, task.favid)
 
-        # Check if already downloaded (check for completed tasks)
-        completed_bvids = await task_dal.get_completed_bvids(task.favid)
-        if task.bid in completed_bvids:
-            return {
-                "status": "already_downloaded",
-                "message": f"Video {task.bid} is already downloaded",
-            }
+        if existing_status is not None:
+            # 任务已存在，更新任务上下文
+            reset_status = existing_status in (TaskStatus.FAILED, TaskStatus.COMPLETED)
+            await task_dal.update_bili_video_task(
+                bvid=task.bid,
+                favid=task.favid,
+                task_context=task_context_dict,
+                reset_status=reset_status,
+            )
+
+            if reset_status:
+                return {
+                    "status": "updated",
+                    "message": f"Task {task.bid} updated and reset to pending",
+                }
+            else:
+                return {
+                    "status": "updated",
+                    "message": f"Task {task.bid} context updated (status: {existing_status.value})",
+                }
 
         # Create task in database
         await task_dal.create_bili_video_task(
