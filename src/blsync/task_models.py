@@ -14,6 +14,7 @@ from sqlalchemy import (
     event,
     func,
     select,
+    text,
     update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -327,6 +328,86 @@ class TaskDAL:
                 stats[status.value] = result.scalar() or 0
 
             return stats
+
+    async def get_tasks_paginated(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        status: str | None = None,
+    ) -> dict:
+        """
+        Get paginated task list with optional status filter.
+
+        Uses raw SQL to bypass SQLAlchemy's type cache issues.
+
+        Args:
+            page: Page number (1-indexed)
+            page_size: Number of items per page
+            status: Optional status filter
+
+        Returns:
+            Dictionary with 'items', 'total', 'page', 'page_size' keys
+        """
+        async with self.async_session() as session:
+            # Build WHERE clause for status filter
+            where_clause = ""
+            params = {"offset": (page - 1) * page_size, "limit": page_size}
+            if status:
+                where_clause = "WHERE status = :status"
+                params["status"] = status
+
+            # Get total count
+            count_sql = text(f"SELECT COUNT(*) FROM tasks {where_clause}")
+            count_result = await session.execute(count_sql, params)
+            total = count_result.scalar() or 0
+
+            # Get paginated results
+            query_sql = text(f"""
+                SELECT id, task_type, task_key, task_data, status,
+                       created_at, updated_at, completed_at, error_message
+                FROM tasks
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await session.execute(query_sql, params)
+            rows = result.all()
+
+            # Convert rows to dict (raw SQL returns strings for dates)
+            items = []
+            for row in rows:
+                items.append({
+                    "id": row[0],
+                    "task_type": row[1],
+                    "task_key": row[2],
+                    "task_data": row[3],
+                    "status": row[4],
+                    "created_at": row[5] if row[5] else None,  # Already a string from SQLite
+                    "updated_at": row[6] if row[6] else None,
+                    "completed_at": row[7] if row[7] else None,
+                    "error_message": row[8],
+                })
+
+            return {
+                "items": items,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
+
+    def _task_to_dict(self, task: TaskModel) -> dict:
+        """Convert TaskModel to dictionary."""
+        return {
+            "id": task.id,
+            "task_type": task.task_type,
+            "task_key": task.task_key,
+            "task_data": task.task_data,
+            "status": task.status,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "error_message": task.error_message,
+        }
 
     async def delete_task(self, task_key: str) -> bool:
         """

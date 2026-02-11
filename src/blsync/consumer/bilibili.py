@@ -34,6 +34,7 @@ class BiliVideoTaskContext(TaskContext):
 
     bid: str
     task_name: str
+    selected_episodes: list[int] | None = None  # 选中的分P索引列表
 
 
 class BiliVideoTask(Task):
@@ -106,6 +107,7 @@ class BiliVideoTask(Task):
                 is_batch=is_batch,
                 name_template=self._fav_config.name,
                 verbose=self._config.verbose,
+                selected_episodes=self._task_context.selected_episodes,
             ),
             # download_file(v_info["pic"], cover_path),
         )
@@ -115,10 +117,9 @@ class BiliVideoTask(Task):
             logger.info(f"Recorded {bid} to database")
 
             # 执行下载后处理
-            post_result = await self.execute_postprocess()
-
-            if not post_result:
-                logger.warning(f"Postprocess for {bid} did not complete successfully")
+            try:
+                await self.execute_postprocess()
+            except Exception:
                 raise Exception(f"Postprocess for {bid} failed")
         else:
             logger.warning(f"Skipping postprocess for {bid} due to download failure")
@@ -232,14 +233,19 @@ async def download_video(
     is_batch: bool = False,
     name_template: str | None = None,
     verbose: bool = False,
+    selected_episodes: list[int] | None = None,
 ) -> bool:
     """
     使用 yutto 下载视频。
 
-    :param media_id: 收藏夹的id
     :param bvid: 视频的bvid
     :param download_path: 存放视频的文件夹路径
+    :param sessdata: sessdata cookie
+    :param extra_list_options: 其他自定义参数
     :param is_batch: 是否为多分P视频，若为True则添加--batch参数
+    :param name_template: 文件名模板
+    :param verbose: 详细输出
+    :param selected_episodes: 选中的分P索引列表（0-based）
     """
 
     video_url = f"https://www.bilibili.com/video/{bvid}"
@@ -262,8 +268,13 @@ async def download_video(
         command.extend(["-c", sessdata])
     else:
         logger.warning("no sessdata")
-    if is_batch:
-        # 如果是多分P视频，添加--batch参数
+    if selected_episodes:
+        # 如果指定了分P选择，添加 --page-index 参数
+        for idx in selected_episodes:
+            command.extend(["--page-index", str(idx)])
+        logger.info(f"Added --page-index for episodes: {selected_episodes}")
+    elif is_batch:
+        # 如果是多分P视频且没有指定分P，添加--batch参数下载全部
         command.append("--batch")
         logger.info(f"Added --batch parameter for multi-part video {bvid}")
     if name_template:
