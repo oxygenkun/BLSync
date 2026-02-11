@@ -80,21 +80,29 @@ async def task_consumer():
             # Process pending tasks
             for task_model in pending_tasks:
                 # Mark task as executing immediately when scheduled
-                await task_dal.update_task_status(task_model.task_key, TaskStatus.EXECUTING)
-
-                # Deserialize task context and create task instance
-                task_context_dict = task_model.task_context_dict
-                context = BiliVideoTaskContext(**task_context_dict)
-                task = BiliVideoTask(context)
-
-                # Create async task for execution (non-blocking)
-                # Pass task_key_str for database updates
-                asyncio.create_task(process_single_task(task, task_model.task_key))
-                bvid, _ = parse_bili_video_key(task_model.task_key)
-                logger.info(
-                    f"[task_consumer] Scheduled task {bvid}, "
-                    f"{len(pending_tasks)} pending tasks remaining"
+                await task_dal.update_task_status(
+                    task_model.task_key, TaskStatus.EXECUTING
                 )
+
+                try:
+                    # Deserialize task context and create task instance
+                    task_context_dict = task_model.task_context_dict
+                    context = BiliVideoTaskContext(**task_context_dict)
+                    task = BiliVideoTask(context)
+
+                    # Create async task for execution (non-blocking)
+                    # Pass task_key_str for database updates
+                    asyncio.create_task(process_single_task(task, task_model.task_key))
+                    logger.info(
+                        f"[task_consumer] Scheduled task {task_model.task_key}, "
+                        f"{len(pending_tasks)} pending tasks remaining"
+                    )
+                except Exception as e:
+                    error_msg = f"Failed to create task for {task_model.task_key}: {e}"
+                    logger.exception(error_msg)
+                    await task_dal.update_task_status(
+                        task_model.task_key, TaskStatus.FAILED, error_msg
+                    )
 
             await asyncio.sleep(1)
 
@@ -135,13 +143,21 @@ async def task_producer():
                         favid=task_name,
                         task_context=context.model_dump(),
                     )
-                    logger.info(f"[task_producer] Added new task {bvid} for {task_name}")
+                    logger.info(
+                        f"[task_producer] Added new task {bvid} for {task_name}"
+                    )
                 elif status == TaskStatus.FAILED:
                     # 任务失败，重置为 PENDING 以重试
                     task_key = make_bili_video_key(bvid, task_name)
                     await task_dal.update_task_status(task_key, TaskStatus.PENDING)
-                    logger.info(f"[task_producer] Reset failed task {bvid} for {task_name} to PENDING")
-                elif status in (TaskStatus.PENDING, TaskStatus.EXECUTING, TaskStatus.COMPLETED):
+                    logger.info(
+                        f"[task_producer] Reset failed task {bvid} for {task_name} to PENDING"
+                    )
+                elif status in (
+                    TaskStatus.PENDING,
+                    TaskStatus.EXECUTING,
+                    TaskStatus.COMPLETED,
+                ):
                     # 任务正在处理、执行中或已完成，跳过
                     logger.debug(
                         f"[task_producer] Task {bvid} (task_name: {task_name}) "
@@ -207,6 +223,7 @@ async def start_background_tasks():
 ###################
 # FastAPI 应用配置 #
 ###################
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -98,7 +98,7 @@ class BiliVideoTask(Task):
         #     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
         # )
 
-        await asyncio.gather(
+        download_result = await asyncio.gather(
             download_video(
                 bvid=bid,
                 download_path=fav_download_path,
@@ -110,14 +110,19 @@ class BiliVideoTask(Task):
             # download_file(v_info["pic"], cover_path),
         )
 
-        # already_download_bvids_add(
-        #     media_id=favid,
-        #     bvid=bid,
-        #     configs=global_configs,
-        # )
+        # 只有下载成功才记录到数据库并执行后处理
+        if download_result:
+            logger.info(f"Recorded {bid} to database")
 
-        # 执行下载后处理
-        await self.execute_postprocess()
+            # 执行下载后处理
+            post_result = await self.execute_postprocess()
+
+            if not post_result:
+                logger.warning(f"Postprocess for {bid} did not complete successfully")
+                raise Exception(f"Postprocess for {bid} failed")
+        else:
+            logger.warning(f"Skipping postprocess for {bid} due to download failure")
+            raise Exception(f"Failed to download video {bid}")
 
     async def execute_postprocess(self) -> None:
         if not self._fav_config.postprocess:
@@ -289,6 +294,11 @@ async def download_video(
         _, stderr = await proc.communicate()
         if stderr:
             logger.info(f"[stderr]\n{stderr.decode()}")
+
+    returncode = await proc.wait()
+    if returncode != 0:
+        logger.error(f"Failed to download {bvid}, yutto returned code: {returncode}")
+        return False
 
     logger.info(f"end downloaded {bvid}")
     return True
