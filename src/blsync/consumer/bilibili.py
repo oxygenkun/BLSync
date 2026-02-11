@@ -269,10 +269,13 @@ async def download_video(
     else:
         logger.warning("no sessdata")
     if selected_episodes:
-        # 如果指定了分P选择，添加 --page-index 参数
-        for idx in selected_episodes:
-            command.extend(["--page-index", str(idx)])
-        logger.info(f"Added --page-index for episodes: {selected_episodes}")
+        # 需要添加 -b 参数启用批量模式
+        # 使用 -p 参数，格式如: "1,3,5" 或 "1~3"
+        command.append("--batch")
+        # yutto 使用 1-based 索引，所以需要 +1
+        episodes_str = ",".join(str(i + 1) for i in sorted(selected_episodes))
+        command.extend(["-p", episodes_str])
+        logger.info(f"Added -p {episodes_str} for episodes (0-based: {selected_episodes})")
     elif is_batch:
         # 如果是多分P视频且没有指定分P，添加--batch参数下载全部
         command.append("--batch")
