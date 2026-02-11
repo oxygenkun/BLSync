@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from loguru import logger
 
 from blsync import get_global_configs
-from blsync.api import router
+from blsync.api import api_router, frontend_router
 from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.database import get_semaphore, get_task_dal
@@ -248,7 +248,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # 注册路由
-app.include_router(router)
+app.include_router(frontend_router)  # 根路由 / (前端页面)
+app.include_router(api_router, prefix="/api")  # API 路由 /api/*
 
 
 def main():

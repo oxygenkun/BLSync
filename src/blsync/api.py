@@ -18,7 +18,11 @@ from blsync.task_models import TaskStatus
 BASE_DIR = Path(__file__).parents[2]
 STATIC_DIR = BASE_DIR / "static"
 
-router = APIRouter()
+# API 路由器（带 /api 前缀）
+api_router = APIRouter()
+
+# 前端路由器（不带前缀）
+frontend_router = APIRouter()
 
 
 class TaskRequest(BaseModel):
@@ -32,7 +36,7 @@ class UpdateTaskStatusRequest(BaseModel):
     error_message: str | None = None  # 失败时的错误信息（可选）
 
 
-@router.get("/", tags=["前端"], summary="前端页面")
+@frontend_router.get("/", tags=["前端"], summary="前端页面")
 async def read_root() -> FileResponse:
     """
     返回前端页面
@@ -46,7 +50,7 @@ async def read_root() -> FileResponse:
         raise HTTPException(status_code=404, detail="Frontend page not found")
 
 
-@router.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
+@api_router.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
 async def create_task(task: TaskRequest):
     """
     创建 Bilibili 视频下载任务
@@ -98,7 +102,7 @@ async def create_task(task: TaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/tasks/status", tags=["任务"], summary="获取任务队列状态")
+@api_router.get("/tasks/status", tags=["任务"], summary="获取任务队列状态")
 async def get_task_status():
     """
     获取当前任务队列的状态信息
@@ -116,7 +120,7 @@ async def get_task_status():
     }
 
 
-@router.get("/api/video/info", tags=["视频"], summary="获取视频详细信息")
+@api_router.get("/video/info", tags=["视频"], summary="获取视频详细信息")
 async def get_video_info(bvid: str = Query(..., description="视频BV号")):
     """
     根据 BV 号获取视频详细信息，包括标题、封面、作者、分P列表等。
@@ -142,7 +146,7 @@ async def get_video_info(bvid: str = Query(..., description="视频BV号")):
     }
 
 
-@router.get("/api/tasks", tags=["任务"], summary="分页获取任务列表")
+@api_router.get("/tasks", tags=["任务"], summary="分页获取任务列表")
 async def get_tasks(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -168,7 +172,7 @@ async def get_tasks(
     return result
 
 
-@router.get("/api/tasks/{task_id}", tags=["任务"], summary="获取任务详情")
+@api_router.get("/tasks/{task_id}", tags=["任务"], summary="获取任务详情")
 async def get_task_detail(task_id: int):
     """
     获取单个任务的详细信息。
@@ -188,7 +192,7 @@ async def get_task_detail(task_id: int):
         return task_dal._task_to_dict(task)
 
 
-@router.put("/api/tasks/{task_id}/status", tags=["任务"], summary="手动修改任务状态")
+@api_router.put("/tasks/{task_id}/status", tags=["任务"], summary="手动修改任务状态")
 async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
     """
     手动修改任务状态。
