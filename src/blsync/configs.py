@@ -81,6 +81,7 @@ class Config(BaseModel):
     data_path: pathlib.Path
 
     verbose: bool
+    log_level: str
 
     interval: int
     request_timeout: int
@@ -143,6 +144,7 @@ def load_configs(args=None) -> Config:
             "data.sqlite3",
         ),
         verbose=args.verbose,
+        log_level=toml_config.get("log_level", "INFO"),
         interval=toml_config["interval"],
         request_timeout=toml_config["request_timeout"],
         max_concurrent_tasks=(

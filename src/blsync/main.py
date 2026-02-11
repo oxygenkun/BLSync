@@ -17,9 +17,12 @@ from blsync.task_models import (
     parse_bili_video_key,
 )
 
-# 配置默认日志等级为INFO
-logger.remove()
-logger.add(sys.stderr, level="INFO")
+
+def setup_logger():
+    """配置 logger，从配置文件读取日志级别"""
+    config = get_global_configs()
+    logger.remove()
+    logger.add(sys.stderr, level=config.log_level)
 
 
 def get_scraper():
@@ -255,6 +258,9 @@ app.include_router(api_router, prefix="/api")  # API 路由 /api/*
 def main():
     """启动FastAPI应用的主入口"""
     import uvicorn
+
+    # 配置日志级别
+    setup_logger()
 
     uvicorn.run(
         "blsync.main:app",
