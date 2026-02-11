@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +16,10 @@ from blsync.task_models import (
     make_bili_video_key,
     parse_bili_video_key,
 )
+
+# 配置默认日志等级为INFO
+logger.remove()
+logger.add(sys.stderr, level="INFO")
 
 
 def get_scraper():
@@ -166,7 +171,7 @@ async def task_producer():
                 else:
                     logger.warning(f"[task_producer] Unknown task status: {status}")
 
-            logger.info(f"[task_producer] Sleeping for {config.interval} seconds")
+            logger.debug(f"[task_producer] Sleeping for {config.interval} seconds")
             await asyncio.sleep(config.interval)
 
         except Exception as e:
