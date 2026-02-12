@@ -250,9 +250,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 注册路由
-app.include_router(frontend_router)  # 根路由 / (前端页面)
+# 注册路由 - API 路由优先，避免被前端 catch-all 路由拦截
 app.include_router(api_router, prefix="/api")  # API 路由 /api/*
+app.include_router(frontend_router)  # 根路由 / (前端页面)
 
 
 def main():

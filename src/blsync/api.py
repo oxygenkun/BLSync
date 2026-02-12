@@ -50,6 +50,33 @@ async def read_root() -> FileResponse:
         raise HTTPException(status_code=404, detail="Frontend page not found")
 
 
+# Catch-all route for SPA (Single Page Application) routing
+# 所有其他路由都返回 index.html，由 React Router 处理
+@frontend_router.get("/{full_path:path}", tags=["前端"], summary="SPA 路由")
+async def spa_fallback(full_path: str) -> FileResponse:
+    """
+    支持 React Router 的客户端路由
+
+    对于任何不是 API 请求的路由，返回 index.html。
+    这样 React Router 可以在前端处理路由（如 /tasks, /add-task 等）。
+
+    注意：直接处理 /assets 路径的静态文件请求。
+    """
+    # 处理静态资源文件
+    if full_path.startswith("assets/"):
+        asset_path = STATIC_DIR / full_path
+        if asset_path.exists() and asset_path.is_file():
+            return FileResponse(str(asset_path))
+
+    # 其他所有路径返回 index.html，由 React Router 处理
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file), media_type="text/html")
+    else:
+        raise HTTPException(status_code=404, detail="Frontend page not found")
+
+
+
 @api_router.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
 async def create_task(task: TaskRequest):
     """
