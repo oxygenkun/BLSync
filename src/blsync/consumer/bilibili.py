@@ -99,8 +99,7 @@ class BiliVideoTask(Task):
         #     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
         # )
 
-        download_result = await asyncio.gather(
-            download_video(
+        download_result = await download_video(
                 bvid=bid,
                 download_path=fav_download_path,
                 sessdata=self._config.credential.sessdata,
@@ -108,9 +107,7 @@ class BiliVideoTask(Task):
                 name_template=self._fav_config.name,
                 verbose=self._config.verbose,
                 selected_episodes=self._task_context.selected_episodes,
-            ),
-            # download_file(v_info["pic"], cover_path),
-        )
+            )
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
