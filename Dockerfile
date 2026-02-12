@@ -1,3 +1,17 @@
+# ============ Frontend Build Stage ============
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Copy frontend files
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
+# ============ Final Runtime Stage ============
 FROM python:3.13-alpine
 
 ENV PATH=/root/.local/bin:$PATH \
@@ -12,8 +26,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /uvx /bin/
 
 # copy files
-COPY pyproject.toml uv.lock README.md static/index.html /app/
+COPY pyproject.toml uv.lock README.md /app/
 COPY src /app/src/
+
+# Copy built static files from frontend-builder stage
+COPY --from=frontend-builder /app/static /app/static
 
 # install dependencies and project
 WORKDIR /app
