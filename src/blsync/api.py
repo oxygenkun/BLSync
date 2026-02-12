@@ -2,6 +2,7 @@
 FastAPI routes and request handlers.
 """
 
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -15,7 +16,9 @@ from blsync.database import get_task_dal
 from blsync.scraper import BScraper
 from blsync.task_models import TaskStatus
 
-BASE_DIR = Path(__file__).parents[2]
+# 支持通过环境变量指定项目根目录，默认使用相对路径计算
+# 本地开发: 自动计算，Docker: 通过环境变量设置为 /app
+BASE_DIR = Path(os.environ.get("BLSYNC_BASE_DIR", Path(__file__).parents[2]))
 STATIC_DIR = BASE_DIR / "static"
 
 # API 路由器（带 /api 前缀）
@@ -70,6 +73,7 @@ async def spa_fallback(full_path: str) -> FileResponse:
 
     # 其他所有路径返回 index.html，由 React Router 处理
     index_file = STATIC_DIR / "index.html"
+    logger.info(index_file)
     if index_file.exists():
         return FileResponse(str(index_file), media_type="text/html")
     else:

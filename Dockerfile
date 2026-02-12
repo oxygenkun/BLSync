@@ -15,7 +15,8 @@ RUN npm run build
 FROM python:3.13-alpine
 
 ENV PATH=/root/.local/bin:$PATH \
-    HOME=/app
+    HOME=/app \
+    BLSYNC_BASE_DIR=/app
 
 # install tools
 RUN apk update && apk add --no-cache ffmpeg su-exec
