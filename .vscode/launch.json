@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "name": "Python: BLSync (Local)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "blsync.main",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"TZ": "Asia/Shanghai"}
+        }
+    ]
+}
