@@ -2,6 +2,8 @@
 
 import enum
 import json
+import os
+import zoneinfo
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +21,37 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Get timezone from environment variable, default to UTC
+TZ_ENV = os.environ.get("TZ", "UTC")
+try:
+    TZ = zoneinfo.ZoneInfo(TZ_ENV)
+except Exception:
+    # Fallback to UTC if timezone is not available
+    TZ = timezone.utc
+
+def format_datetime(dt: datetime | None) -> str | None:
+    """
+    Format datetime to ISO string with timezone conversion.
+
+    Converts UTC datetime from database to local timezone specified by TZ env var.
+
+    Args:
+        dt: datetime object (assumed to be UTC if timezone-naive)
+
+    Returns:
+        ISO formatted string in local timezone, or None if dt is None
+    """
+    if dt is None:
+        return None
+
+    # If datetime is timezone-naive, assume it's UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    # Convert to target timezone
+    dt_local = dt.astimezone(TZ)
+    return dt_local.isoformat()
 
 
 class TaskType(str, enum.Enum):
@@ -373,18 +406,23 @@ class TaskDAL:
             result = await session.execute(query_sql, params)
             rows = result.all()
 
-            # Convert rows to dict (raw SQL returns strings for dates)
+            # Convert rows to dict and format datetimes with timezone conversion
             items = []
             for row in rows:
+                # Parse string dates from SQLite and convert to target timezone
+                created_dt = datetime.fromisoformat(row[5]) if row[5] else None
+                updated_dt = datetime.fromisoformat(row[6]) if row[6] else None
+                completed_dt = datetime.fromisoformat(row[7]) if row[7] else None
+
                 items.append({
                     "id": row[0],
                     "task_type": row[1],
                     "task_key": row[2],
                     "task_data": row[3],
                     "status": row[4],
-                    "created_at": row[5] if row[5] else None,  # Already a string from SQLite
-                    "updated_at": row[6] if row[6] else None,
-                    "completed_at": row[7] if row[7] else None,
+                    "created_at": format_datetime(created_dt),
+                    "updated_at": format_datetime(updated_dt),
+                    "completed_at": format_datetime(completed_dt),
                     "error_message": row[8],
                 })
 
@@ -396,16 +434,16 @@ class TaskDAL:
             }
 
     def _task_to_dict(self, task: TaskModel) -> dict:
-        """Convert TaskModel to dictionary."""
+        """Convert TaskModel to dictionary with timezone conversion."""
         return {
             "id": task.id,
             "task_type": task.task_type,
             "task_key": task.task_key,
             "task_data": task.task_data,
             "status": task.status,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "created_at": format_datetime(task.created_at),
+            "updated_at": format_datetime(task.updated_at),
+            "completed_at": format_datetime(task.completed_at),
             "error_message": task.error_message,
         }
 
