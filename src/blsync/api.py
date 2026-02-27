@@ -14,7 +14,7 @@ from blsync import get_global_configs
 from blsync.consumer.bilibili import BiliVideoTaskContext
 from blsync.database import get_task_dal
 from blsync.scraper import BScraper
-from blsync.task_models import TaskStatus
+from blsync.model.task import TaskStatus
 
 # 支持通过环境变量指定项目根目录，默认使用相对路径计算
 # 本地开发: 自动计算，Docker: 通过环境变量设置为 /app
@@ -221,7 +221,7 @@ async def get_task_detail(task_id: int):
     task_dal = get_task_dal()
 
     async with task_dal.async_session() as session:
-        from blsync.task_models import TaskModel, select
+        from blsync.model.task import TaskModel, select
 
         stmt = select(TaskModel).where(TaskModel.id == task_id)
         result = await session.execute(stmt)
@@ -258,7 +258,7 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
 
     # 通过 task_id 获取任务
     async with task_dal.async_session() as session:
-        from blsync.task_models import TaskModel, select
+        from blsync.model.task import TaskModel, select
 
         stmt = select(TaskModel).where(TaskModel.id == task_id)
         result = await session.execute(stmt)

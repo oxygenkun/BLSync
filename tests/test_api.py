@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from blsync.main import app
-from blsync.task_models import BiliVideoTaskDAL, TaskStatus
+from blsync.model.task import BiliVideoTaskDAL, TaskStatus
 
 
 @pytest.fixture

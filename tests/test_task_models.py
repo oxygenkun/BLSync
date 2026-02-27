@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from blsync.task_models import (
+from blsync.model.task import (
     BiliVideoTaskDAL,
     TaskModel,
     TaskStatus,

@@ -11,7 +11,7 @@ from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.database import get_semaphore, get_task_dal
 from blsync.scraper import BScraper
-from blsync.task_models import (
+from blsync.model.task import (
     TaskStatus,
     make_bili_video_key,
     parse_bili_video_key,
@@ -236,7 +236,7 @@ async def start_background_tasks():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    启动Web服务前，启动后台任务
+    启动Web服务前，启动后台任务ß
     """
     logger.info("Starting background tasks...")
     tasks = asyncio.create_task(start_background_tasks())

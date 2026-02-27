@@ -4,7 +4,7 @@ Shared database utilities and initialization.
 import asyncio
 
 from blsync import get_global_configs
-from blsync.task_models import BiliVideoTaskDAL
+from blsync.model.task import BiliVideoTaskDAL
 
 # Global task database access layer
 _task_dal: BiliVideoTaskDAL | None = None
