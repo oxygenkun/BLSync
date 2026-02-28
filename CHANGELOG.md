@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-02-28
+
+### Changed
+- 修复 Docker 容器中挂载目录的所有权问题
+- 优化 Docker Compose 配置，添加项目名称
+- 更新任务状态流转，使用更精细的状态管理
+- 更新前端子模块版本
+
 ## [0.4.2] - 2026-02-28
 
 ### Added
@@ -155,7 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...v0.4.2
 [0.4.0]: https://github.com/oxygenkun/BLSync/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/oxygenkun/BLSync/compare/v0.2.0...v0.3.0
