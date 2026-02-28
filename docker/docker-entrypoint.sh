@@ -16,8 +16,10 @@ if ! id appuser >/dev/null 2>&1; then
     adduser -u ${UID} -G appuser -D -s /bin/sh appuser
 fi
 
-# Fix ownership of /app directory
-chown -R appuser:appuser /app
+# Fix ownership of app directories (exclude bind mounts like /app/sync and /app/config)
+chown appuser:appuser /app 
+chown appuser:appuser -R /app/config
+chown -R appuser:appuser /app/src /app/static 2>/dev/null || true
 
 # Switch to appuser and run the command
 exec su-exec appuser "$@"
