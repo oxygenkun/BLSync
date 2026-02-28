@@ -24,7 +24,7 @@ GitHub Actions 工作流会根据不同的触发条件自动构建和推送 Dock
 
 ### 3. Pull Request
 - **触发**: 当 PR 修改以下文件时:
-  - `Dockerfile`
+  - `docker/Dockerfile`
   - `pyproject.toml`
   - `uv.lock`
   - `.github/workflows/docker-publish.yml`
@@ -216,7 +216,7 @@ strategy:
 
 ## 相关文件
 
-- [Dockerfile](../Dockerfile) - Docker 镜像定义
+- [Dockerfile](../docker/Dockerfile) - Docker 镜像定义
 - [docker_build_push.py](../docker_build_push.py) - 本地构建脚本
 - [.github/workflows/docker-publish.yml](../.github/workflows/docker-publish.yml) - 工作流定义
 

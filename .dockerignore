@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+.venv.bak/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+
+# Documentation
+docs/
+AGENTS.md
+CHANGELOG.md
+CLAUDE.md
+
+# Config (will be mounted as volume)
+config/
+sync/
+
+# Development files
+.env.example
+docker-compose*.yaml
+Makefile
+package-lock.json
+

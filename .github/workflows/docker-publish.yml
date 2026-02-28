@@ -9,7 +9,7 @@ on:
       - "dev-docker"
   pull_request:
     paths:
-      - "Dockerfile"
+      - "docker/Dockerfile"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/docker-publish.yml"

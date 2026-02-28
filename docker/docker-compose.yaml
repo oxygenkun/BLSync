@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - UID=501
+      - GID=20
+      - TZ=Asia/Shanghai
+    volumes:
+      - ../config:/app/config
+      - ../sync:/app/sync

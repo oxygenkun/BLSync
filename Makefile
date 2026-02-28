@@ -10,11 +10,11 @@ format:
 
 # 本地Docker构建
 docker:
-	docker build -t blsync:latest .
+	docker build -t blsync:latest -f docker/Dockerfile .
 
 # 开发环境docker-compose
 compose:
-	docker compose -f docker-compose-dev.yaml up --build -d
+	docker compose -f docker/docker-compose-dev.yaml up --build -d
 
 # 构建并推送Docker镜像到Docker Hub（包含版本标签和latest）
 docker-release:
