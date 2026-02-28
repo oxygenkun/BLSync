@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-02-28
+
+### Added
+- 添加前端支持，通过 git submodule 集成前端项目
+- 支持选集更新功能，允许选择性下载视频分P
+- 添加分P下载与任务管理API，提供更细粒度的下载控制
+- 添加API接口测试
+
+### Changed
+- 将model层重构到单独目录，优化代码组织结构
+- 使用本机时区处理时间相关逻辑
+- 优化API URL结构，修复潜在逻辑问题
+- 升级Dockerfile，支持前端编译构建
+- 完善配置文档，添加更详细的说明
+
+### Fixed
+- 修复静态页面路径问题
+- 修复下载任务结果同步到数据库时的错误处理
+- 修复选集参数传递问题
+- 修复logger等级配置问题
+- 添加.DS_Store到gitignore，优化静态文件路径处理
+
 ## [0.4.0] - 2025-02-10
 
 ### Added
@@ -133,7 +155,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...v0.4.2
 [0.4.0]: https://github.com/oxygenkun/BLSync/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/oxygenkun/BLSync/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/oxygenkun/BLSync/compare/v0.1.2...v0.2.0
