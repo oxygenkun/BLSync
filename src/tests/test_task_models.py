@@ -96,7 +96,7 @@ async def test_crud_operations():
 
     assert task.id is not None, "Task should have an ID"
     assert task.task_type == TaskType.BILI_VIDEO.value
-    assert task.status == TaskStatus.PENDING.value
+    assert task.status == TaskStatus.READY.value
 
     # Get task by key
     task_key = make_bili_video_key("BV123456", "fav123")
@@ -109,17 +109,17 @@ async def test_crud_operations():
     assert exists, "Task should exist"
 
     # Update task status
-    updated_task = await dal.update_task_status(task_key, TaskStatus.COMPLETED)
+    updated_task = await dal.update_task_status(task_key, TaskStatus.DONE)
     assert updated_task is not None, "Task should be updated"
-    assert updated_task.status == TaskStatus.COMPLETED.value
+    assert updated_task.status == TaskStatus.DONE.value
     assert updated_task.completed_at is not None, "Task should have completion time"
 
     # Get tasks by status
-    pending_tasks = await dal.get_tasks_by_status(TaskStatus.PENDING)
-    assert len(pending_tasks) == 0, "No pending tasks should exist"
+    ready_tasks = await dal.get_tasks_by_status(TaskStatus.READY)
+    assert len(ready_tasks) == 0, "No ready tasks should exist"
 
-    completed_tasks = await dal.get_tasks_by_status(TaskStatus.COMPLETED)
-    assert len(completed_tasks) == 1, "One completed task should exist"
+    done_tasks = await dal.get_tasks_by_status(TaskStatus.DONE)
+    assert len(done_tasks) == 1, "One done task should exist"
 
     # Delete task
     deleted = await dal.delete_task(task_key)
@@ -160,7 +160,7 @@ async def test_task_model_from_context():
     task = TaskModel.from_task_context(task_type, task_key, task_context)
 
     assert task.task_type == TaskType.BILI_VIDEO.value
-    assert task.status == TaskStatus.PENDING.value
+    assert task.status == TaskStatus.READY.value
     assert task.key_dict == task_key
     assert task.task_context_dict == task_context
 
@@ -176,7 +176,7 @@ async def test_task_stats():
     await dal.create_bili_video_task("BV2", "fav2", {})
 
     task_key = make_bili_video_key("BV1", "fav1")
-    await dal.update_task_status(task_key, TaskStatus.COMPLETED)
+    await dal.update_task_status(task_key, TaskStatus.DONE)
 
     task_key2 = make_bili_video_key("BV2", "fav2")
     await dal.update_task_status(task_key2, TaskStatus.FAILED, "Test error")
@@ -184,17 +184,18 @@ async def test_task_stats():
     # Get stats
     stats = await dal.get_task_stats()
 
-    assert stats[TaskStatus.PENDING.value] == 0
-    assert stats[TaskStatus.EXECUTING.value] == 0
-    assert stats[TaskStatus.COMPLETED.value] == 1
+    assert stats[TaskStatus.READY.value] == 0
+    assert stats[TaskStatus.CONSUMING.value] == 0
+    assert stats[TaskStatus.DOWNLOADING.value] == 0
+    assert stats[TaskStatus.DONE.value] == 1
     assert stats[TaskStatus.FAILED.value] == 1
 
     await dal.close()
 
 
 @pytest.mark.asyncio
-async def test_get_pending_tasks_with_limit():
-    """Test getting pending tasks with limit."""
+async def test_get_ready_tasks_with_limit():
+    """Test getting ready tasks with limit."""
     dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
     await dal.create_tables()
 
@@ -203,11 +204,11 @@ async def test_get_pending_tasks_with_limit():
         await dal.create_bili_video_task(f"BV{i}", "fav1", {})
 
     # Get with limit
-    tasks = await dal.get_pending_tasks(limit=3)
+    tasks = await dal.get_ready_tasks(limit=3)
     assert len(tasks) == 3, "Should return limited number of tasks"
 
     # Get without limit
-    all_tasks = await dal.get_pending_tasks()
+    all_tasks = await dal.get_ready_tasks()
     assert len(all_tasks) == 5, "Should return all tasks"
 
     await dal.close()
@@ -262,7 +263,7 @@ async def test_concurrent_operations():
     await asyncio.gather(*tasks)
 
     # Verify total count
-    all_tasks = await dal.get_pending_tasks()
+    all_tasks = await dal.get_ready_tasks()
     assert len(all_tasks) == 30, "Should have 30 tasks total"
 
     await dal.close()

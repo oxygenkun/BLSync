@@ -113,16 +113,16 @@ class TestCreateTask:
         assert "updated" in data["message"].lower()
 
     def test_create_task_already_completed(self, test_client, test_dal):
-        """Test creating a task that already exists with COMPLETED status."""
+        """Test creating a task that already exists with DONE status."""
         task_data = {
             "bid": "BV123456",
             "favid": "fav123",
         }
 
-        # Create a completed task
+        # Create a done task
         asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
         task_key = '{"bvid": "BV123456", "favid": "fav123"}'
-        asyncio.run(test_dal.update_task_status(task_key, TaskStatus.COMPLETED))
+        asyncio.run(test_dal.update_task_status(task_key, TaskStatus.DONE))
 
         # Try to create same task again
         # API first checks has_bili_video_task, which returns True for completed tasks
@@ -167,9 +167,10 @@ class TestGetTaskStatus:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["pending"] == 0
-        assert data["executing"] == 0
-        assert data["completed"] == 0
+        assert data["ready"] == 0
+        assert data["consuming"] == 0
+        assert data["downloading"] == 0
+        assert data["done"] == 0
         assert data["failed"] == 0
 
     def test_get_task_status_with_tasks(self, test_client, test_dal):
@@ -178,19 +179,22 @@ class TestGetTaskStatus:
         asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
         asyncio.run(test_dal.create_bili_video_task("BV2", "fav2", {}))
         asyncio.run(test_dal.create_bili_video_task("BV3", "fav3", {}))
+        asyncio.run(test_dal.create_bili_video_task("BV4", "fav4", {}))
 
         # Update statuses
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.COMPLETED))
+        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE))
         asyncio.run(test_dal.update_task_status('{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"))
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV3", "favid": "fav3"}', TaskStatus.EXECUTING))
+        asyncio.run(test_dal.update_task_status('{"bvid": "BV3", "favid": "fav3"}', TaskStatus.CONSUMING))
+        asyncio.run(test_dal.update_task_status('{"bvid": "BV4", "favid": "fav4"}', TaskStatus.DOWNLOADING))
 
         response = test_client.get("/api/tasks/status")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["pending"] == 0
-        assert data["executing"] == 1
-        assert data["completed"] == 1
+        assert data["ready"] == 0
+        assert data["consuming"] == 1
+        assert data["downloading"] == 1
+        assert data["done"] == 1
         assert data["failed"] == 1
 
 
@@ -287,16 +291,16 @@ class TestGetTasks:
         asyncio.run(test_dal.create_bili_video_task("BV3", "fav3", {}))
 
         # Update statuses
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.COMPLETED))
+        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE))
         asyncio.run(test_dal.update_task_status('{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"))
 
-        # Filter by completed status
-        response = test_client.get("/api/tasks?status=completed")
+        # Filter by done status
+        response = test_client.get("/api/tasks?status=done")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["status"] == "completed"
+        assert data["items"][0]["status"] == "done"
 
     def test_get_tasks_invalid_status(self, test_client):
         """Test getting tasks with invalid status filter."""
@@ -349,7 +353,7 @@ class TestGetTaskDetail:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == task.id
-        assert data["status"] == "pending"
+        assert data["status"] == "ready"
 
     def test_get_task_detail_not_found(self, test_dal):
         """Test getting detail for non-existent task."""
@@ -400,8 +404,8 @@ class TestUpdateTaskStatus:
 
         return mock_session_cm()
 
-    def test_update_status_to_pending(self, test_dal):
-        """Test updating task status to pending."""
+    def test_update_status_to_ready(self, test_dal):
+        """Test updating task status to ready."""
         # Create a task
         task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
 
@@ -412,13 +416,13 @@ class TestUpdateTaskStatus:
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
-                    json={"status": "pending"}
+                    json={"status": "ready"}
                 )
 
         assert response.status_code == 200
 
-    def test_update_status_to_executing(self, test_dal):
-        """Test updating task status to executing."""
+    def test_update_status_to_consuming(self, test_dal):
+        """Test updating task status to consuming."""
         # Create a task
         task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
 
@@ -429,13 +433,13 @@ class TestUpdateTaskStatus:
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
-                    json={"status": "executing"}
+                    json={"status": "consuming"}
                 )
 
         assert response.status_code == 200
 
-    def test_update_status_to_completed(self, test_dal):
-        """Test updating task status to completed."""
+    def test_update_status_to_done(self, test_dal):
+        """Test updating task status to done."""
         # Create a task
         task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
 
@@ -446,7 +450,7 @@ class TestUpdateTaskStatus:
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
-                    json={"status": "completed"}
+                    json={"status": "done"}
                 )
 
         assert response.status_code == 200
@@ -513,7 +517,7 @@ class TestUpdateTaskStatus:
                 client = TestClient(app)
                 response = client.put(
                     "/api/tasks/99999/status",
-                    json={"status": "completed"}
+                    json={"status": "done"}
                 )
 
         assert response.status_code == 404
@@ -524,7 +528,7 @@ class TestUpdateTaskStatus:
         client = TestClient(app)
         response = client.put(
             "/api/tasks/invalid/status",
-            json={"status": "completed"}
+            json={"status": "done"}
         )
 
         assert response.status_code == 422  # Validation error

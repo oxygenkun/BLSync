@@ -35,7 +35,7 @@ class TaskRequest(BaseModel):
 
 
 class UpdateTaskStatusRequest(BaseModel):
-    status: str  # 新状态：pending, executing, completed, failed
+    status: str  # 新状态：ready, consuming, downloading, done, failed
     error_message: str | None = None  # 失败时的错误信息（可选）
 
 
@@ -89,7 +89,7 @@ async def create_task(task: TaskRequest):
     任务创建逻辑：
     1. 检查数据库中是否已存在该任务
     2. 若存在且指定了selected_episodes，更新任务上下文
-    3. 若存在且状态为FAILED/COMPLETED，重置为PENDING
+    3. 若存在且状态为FAILED/DONE，重置为READY
     4. 若不存在，创建新任务到数据库
     """
     try:
@@ -122,7 +122,7 @@ async def create_task(task: TaskRequest):
             if reset_status:
                 return {
                     "status": "updated",
-                    "message": f"Task {task.bid} updated and reset to pending",
+                    "message": f"Task {task.bid} updated and reset to ready",
                 }
             else:
                 return {
@@ -154,8 +154,9 @@ async def get_task_status():
     stats = await task_dal.get_task_stats()
 
     return {
-        "pending": stats[TaskStatus.PENDING.value],
-        "executing": stats[TaskStatus.EXECUTING.value],
+        "ready": stats[TaskStatus.READY.value],
+        "consuming": stats[TaskStatus.CONSUMING.value],
+        "downloading": stats[TaskStatus.DOWNLOADING.value],
         "completed": stats[TaskStatus.COMPLETED.value],
         "failed": stats[TaskStatus.FAILED.value],
     }
@@ -239,8 +240,9 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
     手动修改任务状态。
 
     支持的状态值：
-    - pending: 待处理
-    - executing: 执行中
+    - ready: 待处理
+    - consuming: 消费中
+    - downloading: 下载中
     - completed: 已完成
     - failed: 失败
 

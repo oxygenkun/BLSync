@@ -64,8 +64,9 @@ class TaskType(str, enum.Enum):
 class TaskStatus(str, enum.Enum):
     """Task status enumeration."""
 
-    PENDING = "pending"
-    EXECUTING = "executing"
+    READY = "ready"
+    CONSUMING = "consuming"
+    DOWNLOADING = "downloading"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -98,7 +99,7 @@ class TaskModel(Base):
     task_type: Mapped[str] = mapped_column(String(50))
     task_key: Mapped[str] = mapped_column(String(500))
     task_data: Mapped[str] = mapped_column(Text())
-    status: Mapped[str] = mapped_column(String(20), default=TaskStatus.PENDING.value)
+    status: Mapped[str] = mapped_column(String(20), default=TaskStatus.READY.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(), default=datetime.utcnow, onupdate=datetime.utcnow
@@ -143,7 +144,7 @@ class TaskModel(Base):
             task_type=task_type.value,
             task_key=json.dumps(task_key, sort_keys=True),
             task_data=json.dumps(task_context),
-            status=TaskStatus.PENDING.value,
+            status=TaskStatus.READY.value,
         )
 
     @classmethod
@@ -321,20 +322,20 @@ class TaskDAL:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def get_pending_tasks(self, limit: int | None = None) -> list[TaskModel]:
+    async def get_ready_tasks(self, limit: int | None = None) -> list[TaskModel]:
         """
-        Get pending tasks, optionally limited.
+        Get ready tasks, optionally limited.
 
         Args:
             limit: Maximum number of tasks to return
 
         Returns:
-            List of pending TaskModel instances
+            List of ready TaskModel instances
         """
         async with self.async_session() as session:
             stmt = (
                 select(TaskModel)
-                .where(TaskModel.status == TaskStatus.PENDING.value)
+                .where(TaskModel.status == TaskStatus.READY.value)
                 .order_by(TaskModel.created_at)
             )
             if limit:
@@ -553,11 +554,15 @@ class BiliVideoTaskDAL(TaskDAL):
         deleted_keys = []
 
         async with self.async_session() as session:
-            # Get all pending or executing Bilibili video tasks
+            # Get all ready, consuming or downloading Bilibili video tasks
             stmt = select(TaskModel).where(
                 TaskModel.task_type == TaskType.BILI_VIDEO.value,
                 TaskModel.status.in_(
-                    [TaskStatus.PENDING.value, TaskStatus.EXECUTING.value]
+                    [
+                        TaskStatus.READY.value,
+                        TaskStatus.CONSUMING.value,
+                        TaskStatus.DOWNLOADING.value,
+                    ]
                 ),
             )
             result = await session.execute(stmt)
@@ -611,7 +616,7 @@ class BiliVideoTaskDAL(TaskDAL):
             bvid: Video ID
             favid: Favorite list ID
             task_context: New task context dictionary
-            reset_status: If True, reset status to PENDING (useful for retrying failed tasks)
+            reset_status: If True, reset status to READY (useful for retrying failed tasks)
 
         Returns:
             Updated TaskModel instance if found, None otherwise
@@ -627,7 +632,7 @@ class BiliVideoTaskDAL(TaskDAL):
 
             task.task_data = json.dumps(task_context)
             if reset_status:
-                task.status = TaskStatus.PENDING.value
+                task.status = TaskStatus.READY.value
                 task.error_message = None
 
             await session.commit()

@@ -43,11 +43,14 @@ async def process_single_task(task: Task, task_key_str: str):
 
     async with get_semaphore():  # 限制并发数
         try:
+            # Update status to downloading before starting download
+            await task_dal.update_task_status(task_key_str, TaskStatus.DOWNLOADING)
+
             # 添加超时控制
             await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
             logger.info(f"Task {(bvid, favid)} completed successfully")
 
-            # Update status to completed
+            # Update status to done
             await task_dal.update_task_status(task_key_str, TaskStatus.COMPLETED)
 
         except asyncio.TimeoutError:
@@ -69,27 +72,28 @@ async def task_consumer():
     处理下载任务 - 从数据库获取待处理任务
 
     使用数据库统一管理任务状态：
-    - pending: 等待执行
-    - executing: 正在执行
-    - completed: 已完成
+    - ready: 准备就绪但是 consumer 没有开始
+    - consuming: consumer 开始了但是没有下载
+    - downloading: 正在下载
+    - done: 下载完成
     - failed: 执行失败
     """
     task_dal = get_task_dal()
 
     while True:
         try:
-            # Get pending tasks from database
-            pending_tasks = await task_dal.get_pending_tasks()
+            # Get ready tasks from database
+            ready_tasks = await task_dal.get_ready_tasks()
 
-            if not pending_tasks:
+            if not ready_tasks:
                 await asyncio.sleep(1)
                 continue
 
-            # Process pending tasks
-            for task_model in pending_tasks:
-                # Mark task as executing immediately when scheduled
+            # Process ready tasks
+            for task_model in ready_tasks:
+                # Mark task as consuming immediately when scheduled
                 await task_dal.update_task_status(
-                    task_model.task_key, TaskStatus.EXECUTING
+                    task_model.task_key, TaskStatus.CONSUMING
                 )
 
                 try:
@@ -103,7 +107,7 @@ async def task_consumer():
                     asyncio.create_task(process_single_task(task, task_model.task_key))
                     logger.info(
                         f"[task_consumer] Scheduled task {task_model.task_key}, "
-                        f"{len(pending_tasks)} pending tasks remaining"
+                        f"{len(ready_tasks)} ready tasks remaining"
                     )
                 except Exception as e:
                     error_msg = f"Failed to create task for {task_model.task_key}: {e}"
@@ -125,10 +129,10 @@ async def task_producer():
 
     任务去重逻辑：
     1. 检查任务是否在表中
-    2. 如果不在，添加任务（PENDING）
+    2. 如果不在，添加任务（READY）
     3. 如果在表中：
-       - PENDING/EXECUTING/COMPLETED：跳过
-       - FAILED：更新为 PENDING（重试）
+       - READY/CONSUMING/DOWNLOADING/DONE：跳过
+       - FAILED：更新为 READY（重试）
     """
     logger.info("[task_producer] Starting task producer")
     config = get_global_configs()
@@ -155,18 +159,19 @@ async def task_producer():
                         f"[task_producer] Added new task {bvid} for {task_name}"
                     )
                 elif status == TaskStatus.FAILED:
-                    # 任务失败，重置为 PENDING 以重试
+                    # 任务失败，重置为 READY 以重试
                     task_key = make_bili_video_key(bvid, task_name)
-                    await task_dal.update_task_status(task_key, TaskStatus.PENDING)
+                    await task_dal.update_task_status(task_key, TaskStatus.READY)
                     logger.info(
-                        f"[task_producer] Reset failed task {bvid} for {task_name} to PENDING"
+                        f"[task_producer] Reset failed task {bvid} for {task_name} to READY"
                     )
                 elif status in (
-                    TaskStatus.PENDING,
-                    TaskStatus.EXECUTING,
+                    TaskStatus.READY,
+                    TaskStatus.CONSUMING,
+                    TaskStatus.DOWNLOADING,
                     TaskStatus.COMPLETED,
                 ):
-                    # 任务正在处理、执行中或已完成，跳过
+                    # 任务正在处理、下载中或已完成，跳过
                     logger.debug(
                         f"[task_producer] Task {bvid} (task_name: {task_name}) "
                         f"is {status.value}, skipping"
@@ -187,10 +192,10 @@ async def delete_stale_tasks():
     定期清理已完成但仍在数据库中的任务
 
     清理逻辑：
-    1. 检查 pending 和 executing 状态的任务
+    1. 检查 ready、consuming 和 downloading 状态的任务
     2. 如果视频已下载，删除任务记录
 
-    NOTE: Currently disabled - using completed task status for deduplication
+    NOTE: Currently disabled - using done task status for deduplication
     """
     while True:
         try:

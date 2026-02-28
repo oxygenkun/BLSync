@@ -14,7 +14,7 @@ async def test_get_bvids_from_favid(my_config: Config):
     fid = 3079437303
     bs = BScraper(my_config)
 
-    result = [x async for x in bs._get_bvids_from_favid(fid)]
+    result = [x async for x in bs._get_bvids_from_favid(str(fid))]
     print(list(result))
     assert len(result) > 0
 
