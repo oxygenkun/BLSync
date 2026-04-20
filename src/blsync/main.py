@@ -10,12 +10,12 @@ from blsync.api import api_router, frontend_router
 from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.database import get_semaphore, get_task_dal
-from blsync.scraper import BScraper
 from blsync.model.task import (
     TaskStatus,
     make_bili_video_key,
     parse_bili_video_key,
 )
+from blsync.scraper import BScraper
 
 
 def setup_logger():
