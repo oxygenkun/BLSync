@@ -22,6 +22,12 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from blsync.progress import (
+    DownloadProgressEvent,
+    ProgressEventType,
+    get_progress_broker,
+)
+
 # Get timezone from environment variable, default to UTC
 TZ_ENV = os.environ.get("TZ", "UTC")
 try:
@@ -29,6 +35,7 @@ try:
 except Exception:
     # Fallback to UTC if timezone is not available
     TZ = timezone.utc
+
 
 def format_datetime(dt: datetime | None) -> str | None:
     """
@@ -305,7 +312,10 @@ class TaskDAL:
             result = await session.execute(stmt)
             await session.commit()
 
-            return result.scalars().first()
+            task = result.scalars().first()
+            if task is not None:
+                self._publish_status_event(task, status, error_message)
+            return task
 
     async def get_tasks_by_status(self, status: TaskStatus) -> list[TaskModel]:
         """
@@ -415,17 +425,19 @@ class TaskDAL:
                 updated_dt = datetime.fromisoformat(row[6]) if row[6] else None
                 completed_dt = datetime.fromisoformat(row[7]) if row[7] else None
 
-                items.append({
-                    "id": row[0],
-                    "task_type": row[1],
-                    "task_key": row[2],
-                    "task_data": row[3],
-                    "status": row[4],
-                    "created_at": format_datetime(created_dt),
-                    "updated_at": format_datetime(updated_dt),
-                    "completed_at": format_datetime(completed_dt),
-                    "error_message": row[8],
-                })
+                items.append(
+                    {
+                        "id": row[0],
+                        "task_type": row[1],
+                        "task_key": row[2],
+                        "task_data": row[3],
+                        "status": row[4],
+                        "created_at": format_datetime(created_dt),
+                        "updated_at": format_datetime(updated_dt),
+                        "completed_at": format_datetime(completed_dt),
+                        "error_message": row[8],
+                    }
+                )
 
             return {
                 "items": items,
@@ -447,6 +459,32 @@ class TaskDAL:
             "completed_at": format_datetime(task.completed_at),
             "error_message": task.error_message,
         }
+
+    def _publish_status_event(
+        self,
+        task: TaskModel,
+        status: TaskStatus,
+        error_message: str | None = None,
+    ) -> None:
+        if task.task_type != TaskType.BILI_VIDEO.value:
+            return
+
+        event = ProgressEventType.STATUS
+        if status == TaskStatus.COMPLETED:
+            event = ProgressEventType.COMPLETED
+        elif status == TaskStatus.FAILED:
+            event = ProgressEventType.FAILED
+
+        get_progress_broker().publish(
+            task.id,
+            DownloadProgressEvent(
+                event=event,
+                task_id=task.id,
+                bvid=task.key_dict["bvid"],
+                status=status.value,
+                message=error_message,
+            ),
+        )
 
     async def delete_task(self, task_key: str) -> bool:
         """
@@ -502,6 +540,7 @@ class BiliVideoTaskDAL(TaskDAL):
             session.add(task)
             await session.commit()
             await session.refresh(task)
+            self._publish_status_event(task, TaskStatus.READY)
             return task
 
     async def has_bili_video_task(self, bvid: str, favid: str) -> bool:
@@ -600,7 +639,11 @@ class BiliVideoTaskDAL(TaskDAL):
             tasks = list(result.scalars().all())
 
             # Filter by favid and extract bvids
-            return {task.key_dict["bvid"] for task in tasks if task.key_dict.get("favid") == favid}
+            return {
+                task.key_dict["bvid"]
+                for task in tasks
+                if task.key_dict.get("favid") == favid
+            }
 
     async def update_bili_video_task(
         self,
@@ -637,4 +680,6 @@ class BiliVideoTaskDAL(TaskDAL):
 
             await session.commit()
             await session.refresh(task)
+            if reset_status:
+                self._publish_status_event(task, TaskStatus.READY)
             return task

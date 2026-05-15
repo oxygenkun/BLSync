@@ -15,6 +15,11 @@ from blsync.model.task import (
     make_bili_video_key,
     parse_bili_video_key,
 )
+from blsync.progress import (
+    DownloadProgressEvent,
+    ProgressEventType,
+    get_progress_broker,
+)
 from blsync.scraper import BScraper
 
 
@@ -45,6 +50,19 @@ async def process_single_task(task: Task, task_key_str: str):
         try:
             # Update status to downloading before starting download
             await task_dal.update_task_status(task_key_str, TaskStatus.DOWNLOADING)
+            if (
+                isinstance(task, BiliVideoTask)
+                and task._task_context.task_id is not None
+            ):
+                get_progress_broker().publish(
+                    task._task_context.task_id,
+                    DownloadProgressEvent(
+                        event=ProgressEventType.STATUS,
+                        task_id=task._task_context.task_id,
+                        bvid=bvid,
+                        status=TaskStatus.DOWNLOADING.value,
+                    ),
+                )
 
             # 添加超时控制
             await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
@@ -65,6 +83,20 @@ async def process_single_task(task: Task, task_key_str: str):
             await task_dal.update_task_status(
                 task_key_str, TaskStatus.FAILED, error_msg
             )
+            if (
+                isinstance(task, BiliVideoTask)
+                and task._task_context.task_id is not None
+            ):
+                get_progress_broker().publish(
+                    task._task_context.task_id,
+                    DownloadProgressEvent(
+                        event=ProgressEventType.FAILED,
+                        task_id=task._task_context.task_id,
+                        bvid=bvid,
+                        status=TaskStatus.FAILED.value,
+                        message=error_msg,
+                    ),
+                )
 
 
 async def task_consumer():
@@ -99,7 +131,12 @@ async def task_consumer():
                 try:
                     # Deserialize task context and create task instance
                     task_context_dict = task_model.task_context_dict
-                    context = BiliVideoTaskContext(**task_context_dict)
+                    context = BiliVideoTaskContext(
+                        **{
+                            **task_context_dict,
+                            "task_id": task_model.id,
+                        }
+                    )
                     task = BiliVideoTask(context)
 
                     # Create async task for execution (non-blocking)

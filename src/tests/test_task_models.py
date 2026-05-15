@@ -54,7 +54,9 @@ async def test_create_tables_file():
         # Verify tables exist
         async with dal.engine.begin() as conn:
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+                text(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'"
+                )
             )
             table_exists = result.first() is not None
             assert table_exists, "Tasks table should exist"
@@ -79,7 +81,9 @@ async def test_wal_mode_enabled():
             journal_mode = result.scalar()
             # WAL might not persist across connections in all SQLite versions,
             # but check if it's set correctly on at least one connection
-            assert journal_mode in ("wal", "memory"), f"journal_mode should be wal or memory, got {journal_mode}"
+            assert journal_mode in ("wal", "memory"), (
+                f"journal_mode should be wal or memory, got {journal_mode}"
+            )
 
         await dal.close()
 

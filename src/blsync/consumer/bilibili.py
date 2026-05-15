@@ -24,7 +24,12 @@ from blsync.configs import (
     RemovePostprocessConfig,
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
-from blsync.consumer.yutto_wrapper import download_video
+from blsync.consumer.yutto_wrapper import iter_download_video_progress
+from blsync.progress import (
+    DownloadProgressEvent,
+    ProgressEventType,
+    get_progress_broker,
+)
 from blsync.scraper import BScraper
 
 
@@ -33,6 +38,7 @@ class BiliVideoTaskContext(TaskContext):
 
     bid: str
     task_name: str
+    task_id: int | None = None
     selected_episodes: list[int] | None = None  # 选中的分P索引列表
 
 
@@ -104,7 +110,8 @@ class BiliVideoTask(Task):
         #     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
         # )
 
-        download_result = await download_video(
+        download_result = False
+        async for event in iter_download_video_progress(
             bvid=bid,
             download_path=fav_download_path,
             sessdata=self._config.credential.sessdata,
@@ -112,7 +119,14 @@ class BiliVideoTask(Task):
             name_template=name_template,
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
-        )
+        ):
+            event = self._with_task_id(event)
+            self._publish_progress(event)
+            self._log_progress(event)
+            if event.event == ProgressEventType.COMPLETED:
+                download_result = True
+            elif event.event == ProgressEventType.FAILED:
+                download_result = False
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
@@ -126,6 +140,32 @@ class BiliVideoTask(Task):
         else:
             logger.warning(f"Skipping postprocess for {bid} due to download failure")
             raise Exception(f"Failed to download video {bid}")
+
+    def _with_task_id(self, event: DownloadProgressEvent) -> DownloadProgressEvent:
+        return DownloadProgressEvent(
+            **{
+                **event.to_dict(),
+                "event": event.event,
+                "task_id": self._task_context.task_id,
+            }
+        )
+
+    def _publish_progress(self, event: DownloadProgressEvent) -> None:
+        if self._task_context.task_id is None:
+            return
+        get_progress_broker().publish(self._task_context.task_id, event)
+
+    def _log_progress(self, event: DownloadProgressEvent) -> None:
+        if not self._config.verbose or event.event != ProgressEventType.PROGRESS:
+            return
+        logger.info(
+            "download progress "
+            f"{event.bvid}: overall={event.overall_percent:.2f}% "
+            f"episode={event.episode_index}/{event.episode_count} "
+            f"episode_progress={event.episode_percent:.2f}% "
+            f"bytes={event.downloaded_bytes}/{event.total_bytes} "
+            f"speed={event.speed_bytes_per_second:.0f}B/s"
+        )
 
     async def execute_postprocess(self) -> None:
         if not self._fav_config.postprocess:
