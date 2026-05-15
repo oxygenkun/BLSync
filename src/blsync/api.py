@@ -2,19 +2,23 @@
 FastAPI routes and request handlers.
 """
 
+import asyncio
+import json
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
 from blsync import get_global_configs
 from blsync.consumer.bilibili import BiliVideoTaskContext
 from blsync.database import get_task_dal
-from blsync.scraper import BScraper
 from blsync.model.task import TaskStatus
+from blsync.progress import get_progress_broker
+from blsync.scraper import BScraper
 
 # 支持通过环境变量指定项目根目录，默认使用相对路径计算
 # 本地开发: 自动计算，Docker: 通过环境变量设置为 /app
@@ -80,7 +84,6 @@ async def spa_fallback(full_path: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Frontend page not found")
 
 
-
 @api_router.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
 async def create_task(task: TaskRequest):
     """
@@ -107,12 +110,14 @@ async def create_task(task: TaskRequest):
             task_context_dict["selected_episodes"] = task.selected_episodes
 
         # Check if task already exists
-        existing_status = await task_dal.get_bili_video_task_status(task.bid, task.favid)
+        existing_status = await task_dal.get_bili_video_task_status(
+            task.bid, task.favid
+        )
 
         if existing_status is not None:
             # 任务已存在，更新任务上下文
             reset_status = existing_status in (TaskStatus.FAILED, TaskStatus.COMPLETED)
-            await task_dal.update_bili_video_task(
+            task_model = await task_dal.update_bili_video_task(
                 bvid=task.bid,
                 favid=task.favid,
                 task_context=task_context_dict,
@@ -123,20 +128,26 @@ async def create_task(task: TaskRequest):
                 return {
                     "status": "updated",
                     "message": f"Task {task.bid} updated and reset to ready",
+                    "task_id": task_model.id if task_model else None,
                 }
             else:
                 return {
                     "status": "updated",
                     "message": f"Task {task.bid} context updated (status: {existing_status.value})",
+                    "task_id": task_model.id if task_model else None,
                 }
 
         # Create task in database
-        await task_dal.create_bili_video_task(
+        task_model = await task_dal.create_bili_video_task(
             bvid=task.bid,
             favid=task.favid,
             task_context=task_context_dict,
         )
-        return {"status": "success", "message": f"Task {task.bid} added to database"}
+        return {
+            "status": "success",
+            "message": f"Task {task.bid} added to database",
+            "task_id": task_model.id,
+        }
 
     except Exception as e:
         logger.error(f"Error creating task: {e}")
@@ -214,6 +225,37 @@ async def get_tasks(
     return result
 
 
+@api_router.get("/tasks/events", tags=["任务"], summary="订阅任务变更")
+async def stream_all_task_events():
+    """Stream future task events across the whole queue as SSE."""
+
+    async def event_stream():
+        subscription = get_progress_broker().subscribe_all()
+        iterator = subscription.__aiter__()
+        next_event = asyncio.create_task(iterator.__anext__())
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        asyncio.shield(next_event), timeout=15
+                    )
+                except TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                yield (
+                    f"event: {event.event.value}\n"
+                    f"data: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+                )
+                next_event = asyncio.create_task(iterator.__anext__())
+        finally:
+            next_event.cancel()
+            with suppress(asyncio.CancelledError):
+                await next_event
+            await subscription.aclose()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @api_router.get("/tasks/{task_id}", tags=["任务"], summary="获取任务详情")
 async def get_task_detail(task_id: int):
     """
@@ -232,6 +274,45 @@ async def get_task_detail(task_id: int):
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
         return task_dal._task_to_dict(task)
+
+
+@api_router.get("/tasks/{task_id}/events", tags=["任务"], summary="订阅任务进度")
+async def stream_task_events(task_id: int):
+    """Stream latest and future progress events for one task as SSE."""
+    task_dal = get_task_dal()
+    async with task_dal.async_session() as session:
+        from blsync.model.task import TaskModel, select
+
+        stmt = select(TaskModel.id).where(TaskModel.id == task_id)
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    async def event_stream():
+        subscription = get_progress_broker().subscribe(task_id)
+        iterator = subscription.__aiter__()
+        next_event = asyncio.create_task(iterator.__anext__())
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        asyncio.shield(next_event), timeout=15
+                    )
+                except TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                yield (
+                    f"event: {event.event.value}\n"
+                    f"data: {json.dumps(event.to_dict(), ensure_ascii=False)}\n\n"
+                )
+                next_event = asyncio.create_task(iterator.__anext__())
+        finally:
+            next_event.cancel()
+            with suppress(asyncio.CancelledError):
+                await next_event
+            await subscription.aclose()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @api_router.put("/tasks/{task_id}/status", tags=["任务"], summary="手动修改任务状态")
@@ -291,6 +372,7 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
 
         await session.commit()
         await session.refresh(task)
+        task_dal._publish_status_event(task, new_status, request.error_message)
 
         return task_dal._task_to_dict(task)
 

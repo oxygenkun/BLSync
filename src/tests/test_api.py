@@ -9,6 +9,11 @@ from fastapi.testclient import TestClient
 
 from blsync.main import app
 from blsync.model.task import BiliVideoTaskDAL, TaskStatus
+from blsync.progress import (
+    DownloadProgressEvent,
+    ProgressEventType,
+    get_progress_broker,
+)
 
 
 @pytest.fixture
@@ -93,6 +98,7 @@ class TestCreateTask:
         data = response.json()
         assert data["status"] == "success"
         assert "BV123456" in data["message"]
+        assert isinstance(data["task_id"], int)
 
     def test_create_task_already_queued(self, test_client, test_dal):
         """Test creating a task that already exists in database."""
@@ -111,6 +117,7 @@ class TestCreateTask:
         data = response.json()
         assert data["status"] == "updated"
         assert "updated" in data["message"].lower()
+        assert isinstance(data["task_id"], int)
 
     def test_create_task_already_completed(self, test_client, test_dal):
         """Test creating a task that already exists with DONE status."""
@@ -182,10 +189,26 @@ class TestGetTaskStatus:
         asyncio.run(test_dal.create_bili_video_task("BV4", "fav4", {}))
 
         # Update statuses
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE))
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"))
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV3", "favid": "fav3"}', TaskStatus.CONSUMING))
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV4", "favid": "fav4"}', TaskStatus.DOWNLOADING))
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE
+            )
+        )
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"
+            )
+        )
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV3", "favid": "fav3"}', TaskStatus.CONSUMING
+            )
+        )
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV4", "favid": "fav4"}', TaskStatus.DOWNLOADING
+            )
+        )
 
         response = test_client.get("/api/tasks/status")
 
@@ -242,9 +265,11 @@ class TestGetVideoInfo:
                     response = client.get("/api/video/info?bvid=INVALID")
 
         assert response.status_code == 404
-        assert ("not found" in response.json()["detail"].lower() or
-                "not exist" in response.json()["detail"].lower() or
-                "失效" in response.json()["detail"])
+        assert (
+            "not found" in response.json()["detail"].lower()
+            or "not exist" in response.json()["detail"].lower()
+            or "失效" in response.json()["detail"]
+        )
 
     def test_get_video_info_missing_bvid(self, test_client):
         """Test getting video info without bvid parameter."""
@@ -291,8 +316,16 @@ class TestGetTasks:
         asyncio.run(test_dal.create_bili_video_task("BV3", "fav3", {}))
 
         # Update statuses
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE))
-        asyncio.run(test_dal.update_task_status('{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"))
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE
+            )
+        )
+        asyncio.run(
+            test_dal.update_task_status(
+                '{"bvid": "BV2", "favid": "fav2"}', TaskStatus.FAILED, "Test error"
+            )
+        )
 
         # Filter by done status
         response = test_client.get("/api/tasks?status=done")
@@ -332,7 +365,9 @@ class TestGetTaskDetail:
     def test_get_task_detail_success(self, test_dal):
         """Test getting task detail successfully."""
         # Create a task
-        task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {"title": "Test"}))
+        task = asyncio.run(
+            test_dal.create_bili_video_task("BV123456", "fav123", {"title": "Test"})
+        )
 
         # Create a proper async context manager mock
         @asynccontextmanager
@@ -345,7 +380,7 @@ class TestGetTaskDetail:
 
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.get(f"/api/tasks/{task.id}")
@@ -357,6 +392,7 @@ class TestGetTaskDetail:
 
     def test_get_task_detail_not_found(self, test_dal):
         """Test getting detail for non-existent task."""
+
         # Create a proper async context manager mock
         @asynccontextmanager
         async def mock_session_cm():
@@ -368,7 +404,7 @@ class TestGetTaskDetail:
 
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.get("/api/tasks/99999")
@@ -381,7 +417,53 @@ class TestGetTaskDetail:
         client = TestClient(app)
         response = client.get("/api/tasks/invalid")
 
-        assert response.status_code == 422  # Validation error for integer path parameter
+        assert (
+            response.status_code == 422
+        )  # Validation error for integer path parameter
+
+
+class TestTaskEvents:
+    """Tests for GET /api/tasks/{task_id}/events endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_stream_task_events_replays_latest_snapshot(self, test_dal):
+        from blsync.api import stream_task_events
+
+        task = await test_dal.create_bili_video_task("BV123456", "fav123", {})
+        get_progress_broker().publish(
+            task.id,
+            DownloadProgressEvent(
+                event=ProgressEventType.PROGRESS,
+                task_id=task.id,
+                bvid="BV123456",
+                status="downloading",
+                overall_percent=50.0,
+            ),
+        )
+
+        with patch("blsync.api.get_task_dal", return_value=test_dal):
+            response = await stream_task_events(task.id)
+            first_chunk = await anext(response.body_iterator)
+            await response.body_iterator.aclose()
+
+        assert first_chunk.startswith("event: progress")
+        assert '"overall_percent": 50.0' in first_chunk
+
+    @pytest.mark.asyncio
+    async def test_stream_task_events_closes_cleanly_while_waiting(self, test_dal):
+        from blsync.api import stream_task_events
+
+        task = await test_dal.create_bili_video_task("BV123456", "fav123", {})
+
+        with patch("blsync.api.get_task_dal", return_value=test_dal):
+            response = await stream_task_events(task.id)
+            stream_task = asyncio.create_task(anext(response.body_iterator))
+            await asyncio.sleep(0)
+            stream_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await stream_task
+
+        assert stream_task.cancelled()
 
 
 class TestUpdateTaskStatus:
@@ -389,6 +471,7 @@ class TestUpdateTaskStatus:
 
     def _create_mock_session(self, task=None):
         """Helper to create a mock session for tests."""
+
         @asynccontextmanager
         async def mock_session_cm():
             mock_session = MagicMock()
@@ -411,12 +494,11 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "ready"}
+                    f"/api/tasks/{task.id}/status", json={"status": "ready"}
                 )
 
         assert response.status_code == 200
@@ -428,12 +510,11 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "consuming"}
+                    f"/api/tasks/{task.id}/status", json={"status": "consuming"}
                 )
 
         assert response.status_code == 200
@@ -445,12 +526,11 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "done"}
+                    f"/api/tasks/{task.id}/status", json={"status": "done"}
                 )
 
         assert response.status_code == 200
@@ -462,12 +542,12 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
-                    json={"status": "failed", "error_message": "Download failed"}
+                    json={"status": "failed", "error_message": "Download failed"},
                 )
 
         assert response.status_code == 200
@@ -479,12 +559,11 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "failed"}
+                    f"/api/tasks/{task.id}/status", json={"status": "failed"}
                 )
 
         assert response.status_code == 400
@@ -497,12 +576,11 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "invalid_status"}
+                    f"/api/tasks/{task.id}/status", json={"status": "invalid_status"}
                 )
 
         assert response.status_code == 400
@@ -512,12 +590,11 @@ class TestUpdateTaskStatus:
         """Test updating status for non-existent task."""
         mock_get_session = MagicMock(return_value=self._create_mock_session(task=None))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    "/api/tasks/99999/status",
-                    json={"status": "done"}
+                    "/api/tasks/99999/status", json={"status": "done"}
                 )
 
         assert response.status_code == 404
@@ -526,10 +603,7 @@ class TestUpdateTaskStatus:
     def test_update_status_invalid_task_id(self):
         """Test updating status with invalid task ID format."""
         client = TestClient(app)
-        response = client.put(
-            "/api/tasks/invalid/status",
-            json={"status": "done"}
-        )
+        response = client.put("/api/tasks/invalid/status", json={"status": "done"})
 
         assert response.status_code == 422  # Validation error
 
@@ -540,12 +614,12 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, 'get_session', mock_get_session):
+        with patch.object(test_dal, "get_session", mock_get_session):
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
-                    json={}  # Missing status field
+                    json={},  # Missing status field
                 )
 
         assert response.status_code == 422  # Validation error
