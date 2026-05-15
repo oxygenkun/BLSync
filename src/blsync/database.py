@@ -1,6 +1,7 @@
 """
 Shared database utilities and initialization.
 """
+
 import asyncio
 
 from blsync import get_global_configs
