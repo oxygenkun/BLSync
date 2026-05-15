@@ -2,9 +2,7 @@
 Bilibili消费者模块 - 处理Bilibili相关的下载任务
 """
 
-import asyncio
 import pathlib
-import sys
 from datetime import datetime
 from functools import lru_cache
 
@@ -26,6 +24,7 @@ from blsync.configs import (
     RemovePostprocessConfig,
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
+from blsync.consumer.yutto_wrapper import download_video
 from blsync.scraper import BScraper
 
 
@@ -100,14 +99,14 @@ class BiliVideoTask(Task):
         # )
 
         download_result = await download_video(
-                bvid=bid,
-                download_path=fav_download_path,
-                sessdata=self._config.credential.sessdata,
-                is_batch=is_batch,
-                name_template=self._fav_config.name,
-                verbose=self._config.verbose,
-                selected_episodes=self._task_context.selected_episodes,
-            )
+            bvid=bid,
+            download_path=fav_download_path,
+            sessdata=self._config.credential.sessdata,
+            is_batch=is_batch,
+            name_template=self._fav_config.name,
+            verbose=self._config.verbose,
+            selected_episodes=self._task_context.selected_episodes,
+        )
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
@@ -220,99 +219,6 @@ async def aid_from_bvid(bvid: str, credential: Credential) -> int:
     v = Video(bvid=bvid, credential=credential)
     video_info = await v.get_info()
     return video_info["aid"]
-
-
-async def download_video(
-    bvid: str,
-    download_path: pathlib.Path,
-    sessdata: str | None = None,
-    extra_list_options: list[str] | None = None,
-    is_batch: bool = False,
-    name_template: str | None = None,
-    verbose: bool = False,
-    selected_episodes: list[int] | None = None,
-) -> bool:
-    """
-    使用 yutto 下载视频。
-
-    :param bvid: 视频的bvid
-    :param download_path: 存放视频的文件夹路径
-    :param sessdata: sessdata cookie
-    :param extra_list_options: 其他自定义参数
-    :param is_batch: 是否为多分P视频，若为True则添加--batch参数
-    :param name_template: 文件名模板
-    :param verbose: 详细输出
-    :param selected_episodes: 选中的分P索引列表（0-based）
-    """
-
-    video_url = f"https://www.bilibili.com/video/{bvid}"
-
-    command = [
-        sys.executable,
-        "-m",
-        "yutto",
-        "-d",
-        str(download_path),
-        "--no-danmaku",
-        "--no-subtitle",
-        "--with-metadata",
-        "--save-cover",
-        "--no-color",
-        "--no-progress",
-    ]
-    if sessdata:
-        # 添加cookie
-        command.extend(["-c", sessdata])
-    else:
-        logger.warning("no sessdata")
-    if selected_episodes:
-        # 需要添加 -b 参数启用批量模式
-        # 使用 -p 参数，格式如: "1,3,5" 或 "1~3"
-        command.append("--batch")
-        # yutto 使用 1-based 索引，所以需要 +1
-        episodes_str = ",".join(str(i + 1) for i in sorted(selected_episodes))
-        command.extend(["-p", episodes_str])
-        logger.info(f"Added -p {episodes_str} for episodes (0-based: {selected_episodes})")
-    elif is_batch:
-        # 如果是多分P视频且没有指定分P，添加--batch参数下载全部
-        command.append("--batch")
-        logger.info(f"Added --batch parameter for multi-part video {bvid}")
-    if name_template:
-        # 如果提供了name模板，添加--subpath-template参数
-        command.extend(["--subpath-template", name_template])
-        logger.info(
-            f"Added --subpath-template parameter with template: {name_template}"
-        )
-    if extra_list_options:
-        # 其他自定义参数
-        command.extend(extra_list_options)
-    command.append(video_url)
-
-    logger.info(f"start downloading {bvid}")
-    logger.debug(f"run with command: {' '.join(command)}")
-
-    proc = await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-
-    if verbose:
-        while proc.stdout and not proc.stdout.at_eof():
-            if proc.stdout and (line := await proc.stdout.readline()):
-                logger.info(line.decode().strip())
-            if proc.stderr and (err := await proc.stderr.readline()):
-                logger.info(err.decode().strip())
-    else:
-        _, stderr = await proc.communicate()
-        if stderr:
-            logger.info(f"[stderr]\n{stderr.decode()}")
-
-    returncode = await proc.wait()
-    if returncode != 0:
-        logger.error(f"Failed to download {bvid}, yutto returned code: {returncode}")
-        return False
-
-    logger.info(f"end downloaded {bvid}")
-    return True
 
 
 async def download_file(url, download_path: pathlib.Path):
