@@ -173,6 +173,18 @@ async def get_task_status():
     }
 
 
+@api_router.post("/tasks/scan", tags=["任务"], summary="立即扫描收藏夹")
+async def scan_tasks():
+    """Trigger one immediate favorite scan using the producer workflow."""
+    from blsync.main import scan_favorites_once
+
+    try:
+        return await scan_favorites_once()
+    except Exception as e:
+        logger.error(f"Error scanning favorites: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/video/info", tags=["视频"], summary="获取视频详细信息")
 async def get_video_info(bvid: str = Query(..., description="视频BV号")):
     """

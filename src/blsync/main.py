@@ -22,6 +22,8 @@ from blsync.progress import (
 )
 from blsync.scraper import BScraper
 
+_scan_lock = asyncio.Lock()
+
 
 def setup_logger():
     """配置 logger，从配置文件读取日志级别"""
@@ -173,48 +175,9 @@ async def task_producer():
     """
     logger.info("[task_producer] Starting task producer")
     config = get_global_configs()
-    bs = get_scraper()
-    task_dal = get_task_dal()
-
     while True:
         try:
-            async for bvid, task_name in bs.get_all_bvids():
-                # 创建任务上下文
-                context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
-
-                # 获取任务状态
-                status = await task_dal.get_bili_video_task_status(bvid, task_name)
-
-                if status is None:
-                    # 任务不存在，创建新任务
-                    await task_dal.create_bili_video_task(
-                        bvid=bvid,
-                        favid=task_name,
-                        task_context=context.model_dump(),
-                    )
-                    logger.info(
-                        f"[task_producer] Added new task {bvid} for {task_name}"
-                    )
-                elif status == TaskStatus.FAILED:
-                    # 任务失败，重置为 READY 以重试
-                    task_key = make_bili_video_key(bvid, task_name)
-                    await task_dal.update_task_status(task_key, TaskStatus.READY)
-                    logger.info(
-                        f"[task_producer] Reset failed task {bvid} for {task_name} to READY"
-                    )
-                elif status in (
-                    TaskStatus.READY,
-                    TaskStatus.CONSUMING,
-                    TaskStatus.DOWNLOADING,
-                    TaskStatus.COMPLETED,
-                ):
-                    # 任务正在处理、下载中或已完成，跳过
-                    logger.debug(
-                        f"[task_producer] Task {bvid} (task_name: {task_name}) "
-                        f"is {status.value}, skipping"
-                    )
-                else:
-                    logger.warning(f"[task_producer] Unknown task status: {status}")
+            await scan_favorites_once()
 
             logger.debug(f"[task_producer] Sleeping for {config.interval} seconds")
             await asyncio.sleep(config.interval)
@@ -222,6 +185,49 @@ async def task_producer():
         except Exception as e:
             logger.error(f"Error in task_producer: {e}")
             await asyncio.sleep(config.interval)
+
+
+async def scan_favorites_once() -> dict[str, int]:
+    """Scan configured favorites once and enqueue missing or failed tasks."""
+    async with _scan_lock:
+        bs = get_scraper()
+        task_dal = get_task_dal()
+        stats = {"created": 0, "reset": 0, "skipped": 0}
+
+        async for bvid, task_name in bs.get_all_bvids():
+            context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
+            status = await task_dal.get_bili_video_task_status(bvid, task_name)
+
+            if status is None:
+                await task_dal.create_bili_video_task(
+                    bvid=bvid,
+                    favid=task_name,
+                    task_context=context.model_dump(),
+                )
+                stats["created"] += 1
+                logger.info(f"[task_producer] Added new task {bvid} for {task_name}")
+            elif status == TaskStatus.FAILED:
+                task_key = make_bili_video_key(bvid, task_name)
+                await task_dal.update_task_status(task_key, TaskStatus.READY)
+                stats["reset"] += 1
+                logger.info(
+                    f"[task_producer] Reset failed task {bvid} for {task_name} to READY"
+                )
+            elif status in (
+                TaskStatus.READY,
+                TaskStatus.CONSUMING,
+                TaskStatus.DOWNLOADING,
+                TaskStatus.COMPLETED,
+            ):
+                stats["skipped"] += 1
+                logger.debug(
+                    f"[task_producer] Task {bvid} (task_name: {task_name}) "
+                    f"is {status.value}, skipping"
+                )
+            else:
+                logger.warning(f"[task_producer] Unknown task status: {status}")
+
+        return stats
 
 
 async def delete_stale_tasks():
