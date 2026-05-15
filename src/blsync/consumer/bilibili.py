@@ -94,6 +94,12 @@ class BiliVideoTask(Task):
         if is_batch:
             logger.info(f"Video {bid} has {v_info['videos']} parts, using batch mode")
 
+        name_template = (
+            self._fav_config.name_group
+            if is_batch and self._fav_config.name_group
+            else self._fav_config.name
+        )
+
         # cover_path = pathlib.Path(
         #     fav_download_path, repair_filename(f"{v_info['title']}.jpg")
         # )
@@ -103,7 +109,7 @@ class BiliVideoTask(Task):
             download_path=fav_download_path,
             sessdata=self._config.credential.sessdata,
             is_batch=is_batch,
-            name_template=self._fav_config.name,
+            name_template=name_template,
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
         )
