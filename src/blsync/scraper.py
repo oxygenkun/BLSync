@@ -43,7 +43,7 @@ class BScraper:
 
     async def get_all_bvids(self) -> AsyncGenerator[tuple[str, str], None]:
         for task_name, config in self.config.favorite_list.items():
-            if task_name == "-1":
+            if task_name == "-1" or config.fid == "-1":
                 continue
 
             async for bvid in self._get_bvids_from_favid(config.fid):
