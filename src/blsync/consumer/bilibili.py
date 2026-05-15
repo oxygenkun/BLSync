@@ -114,7 +114,7 @@ class BiliVideoTask(Task):
         async for event in iter_download_video_progress(
             bvid=bid,
             download_path=fav_download_path,
-            sessdata=self._config.credential.sessdata,
+            auth=_build_yutto_auth(self._config.credential),
             is_batch=is_batch,
             name_template=name_template,
             verbose=self._config.verbose,
@@ -258,6 +258,15 @@ def credential_from_config(config: ConfigCredential) -> Credential:
         dedeuserid=config.dedeuserid,
         ac_time_value=config.ac_time_value,
     )
+
+
+def _build_yutto_auth(config: ConfigCredential) -> str | None:
+    cookies = {
+        "SESSDATA": config.sessdata,
+        "bili_jct": config.bili_jct,
+    }
+    cookie_pairs = [f"{name}={value}" for name, value in cookies.items() if value]
+    return "; ".join(cookie_pairs) or None
 
 
 async def aid_from_bvid(bvid: str, credential: Credential) -> int:

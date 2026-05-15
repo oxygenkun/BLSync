@@ -62,7 +62,7 @@ _original_yutto_downloader_show_progress = yutto_downloader.show_progress
 class YuttoDownloadOptions:
     bvid: str
     download_path: pathlib.Path
-    sessdata: str | None = None
+    auth: str | None = None
     extra_list_options: list[str] = field(default_factory=list)
     is_batch: bool = False
     name_template: str | None = None
@@ -95,7 +95,7 @@ class YuttoRecoverableDownloadError(Exception):
 async def download_video(
     bvid: str,
     download_path: pathlib.Path,
-    sessdata: str | None = None,
+    auth: str | None = None,
     extra_list_options: list[str] | None = None,
     is_batch: bool = False,
     name_template: str | None = None,
@@ -107,7 +107,7 @@ async def download_video(
 
     :param bvid: 视频的bvid
     :param download_path: 存放视频的文件夹路径
-    :param sessdata: sessdata cookie
+    :param auth: Bilibili cookie string, for example ``SESSDATA=...; bili_jct=...``
     :param extra_list_options: 其他自定义参数
     :param is_batch: 是否为多分P视频，若为True则添加--batch参数
     :param name_template: 文件名模板
@@ -117,7 +117,7 @@ async def download_video(
     options = YuttoDownloadOptions(
         bvid=bvid,
         download_path=download_path,
-        sessdata=sessdata,
+        auth=auth,
         extra_list_options=extra_list_options or [],
         is_batch=is_batch,
         name_template=name_template,
@@ -160,7 +160,7 @@ async def download_video(
 async def iter_download_video_progress(
     bvid: str,
     download_path: pathlib.Path,
-    sessdata: str | None = None,
+    auth: str | None = None,
     extra_list_options: list[str] | None = None,
     is_batch: bool = False,
     name_template: str | None = None,
@@ -171,7 +171,7 @@ async def iter_download_video_progress(
     options = YuttoDownloadOptions(
         bvid=bvid,
         download_path=download_path,
-        sessdata=sessdata,
+        auth=auth,
         extra_list_options=extra_list_options or [],
         is_batch=is_batch,
         name_template=name_template,
@@ -339,10 +339,10 @@ def _build_yutto_args(options: YuttoDownloadOptions) -> list[str]:
 
 
 def _append_cookie_args(args: list[str], options: YuttoDownloadOptions) -> None:
-    if options.sessdata:
-        args.extend(["-c", options.sessdata])
+    if options.auth:
+        args.extend(["--auth", options.auth])
     else:
-        logger.warning("no sessdata")
+        logger.warning("no auth")
 
 
 def _append_episode_args(args: list[str], options: YuttoDownloadOptions) -> None:

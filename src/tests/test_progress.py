@@ -4,6 +4,8 @@ import pytest
 
 from blsync.consumer.bilibili import BiliVideoTaskContext
 from blsync.consumer.yutto_wrapper import (
+    YuttoDownloadOptions,
+    _build_yutto_args,
     _capture_yutto_show_progress,
     iter_download_video_progress,
 )
@@ -116,3 +118,17 @@ def test_yutto_downloader_uses_captured_progress_function():
 
     assert yutto_progressbar.show_progress is _capture_yutto_show_progress
     assert yutto_downloader.show_progress is _capture_yutto_show_progress
+
+
+def test_yutto_uses_auth_cookie_argument(tmp_path):
+    args = _build_yutto_args(
+        YuttoDownloadOptions(
+            bvid="BV1",
+            download_path=tmp_path,
+            auth="SESSDATA=sess; bili_jct=jct",
+        )
+    )
+
+    assert "--auth" in args
+    assert "SESSDATA=sess; bili_jct=jct" in args
+    assert "--sessdata" not in args
