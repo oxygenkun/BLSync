@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-16
+
+### Added
+- 添加任务进度 SSE 订阅接口，支持实时推送任务状态与下载进度
+- 添加立即扫描收藏夹接口，支持按需触发一次同步扫描
+- 添加 `name_group` 配置，支持更灵活的视频命名分组
+
+### Changed
+- 重构 yutto 下载封装，统一进度捕获与下载参数构建逻辑
+- 下载认证改为传递完整 cookie 字符串，支持同时携带 `SESSDATA` 与 `bili_jct`
+- 重整收藏夹配置模板与示例，完善命名模板说明
+- 更新前端子模块、Python 依赖与 Docker 构建环境
+
+### Fixed
+- 修复非法收藏夹配置导致整体配置加载失败的问题，改为跳过无效项并记录警告
+- 修复 Docker 前端构建在跨平台场景下的构建平台选择问题
+
 ## [0.4.3] - 2026-02-28
 
 ### Changed
@@ -163,7 +180,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/oxygenkun/BLSync/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...v0.4.2
 [0.4.0]: https://github.com/oxygenkun/BLSync/compare/v0.3.0...v0.4.0
