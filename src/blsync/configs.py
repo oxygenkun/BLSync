@@ -73,6 +73,7 @@ class FavoriteListConfig(BaseModel):
     fid: str
     path: str
     name: str | None = None
+    name_group: str | None = None
     postprocess: list[PostprocessConfigT] | None = None
 
 
@@ -126,6 +127,7 @@ def load_configs(args=None) -> Config:
                     fid=str(value["fid"]),
                     path=value["path"],
                     name=value.get("name"),
+                    name_group=value.get("name_group"),
                     postprocess=[
                         _post_process_match(p) for p in value.get("postprocess", [])
                     ],
