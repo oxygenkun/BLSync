@@ -26,17 +26,17 @@ classifiers = [
 ]
 dependencies = [
     "toml>=0.10.2",
-    "bilibili-api-python>=17.1.4",
-    "fastapi>=0.115.5",
-    "uvicorn>=0.32.0",
-    "loguru>=0.7.2",
-    "aiohttp>=3.11.18",
-    "yutto>=2.1.1",
-    "pydantic-settings>=2.10.1",
-    "pydantic>=2.11.7",
-    "sqlalchemy>=2.0.36",
-    "aiosqlite>=0.20.0",
-    "greenlet>=3.0.0",
+    "bilibili-api-python>=17.4.1",
+    "fastapi>=0.136.1",
+    "uvicorn>=0.47.0",
+    "loguru>=0.7.3",
+    "aiohttp>=3.13.5",
+    "yutto>=2.2.0",
+    "pydantic-settings>=2.14.1",
+    "pydantic>=2.13.4",
+    "sqlalchemy>=2.0.49",
+    "aiosqlite>=0.22.1",
+    "greenlet>=3.5.0",
 ]
 readme = "README.md"
 
@@ -52,9 +52,9 @@ bs = 'blsync.main:main'
 
 [dependency-groups]
 dev = [
-    "ruff>=0.7.3",
-    "pytest>=8.3.3",
-    "pytest-asyncio>=0.24.0",
+    "ruff>=0.15.13",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
 ]
 
 [build-system]
