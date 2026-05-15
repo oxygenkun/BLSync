@@ -2,7 +2,8 @@ import argparse
 import pathlib
 
 import toml
-from pydantic import BaseModel, ConfigDict
+from loguru import logger
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 
 def parse_command_line_args(args=None) -> argparse.Namespace:
@@ -76,6 +77,15 @@ class FavoriteListConfig(BaseModel):
     name_group: str | None = None
     postprocess: list[PostprocessConfigT] | None = None
 
+    @field_validator("fid")
+    @classmethod
+    def validate_fid(cls, value: str) -> str:
+        try:
+            int(value)
+        except ValueError as exc:
+            raise ValueError("fid must be an integer string") from exc
+        return value
+
 
 class Config(BaseModel):
     config_file: pathlib.Path
@@ -99,7 +109,7 @@ def _post_process_match(value: dict) -> MovePostprocessConfig | RemovePostproces
         case "remove":
             return RemovePostprocessConfig()
         case _ as known:
-            raise Exception(f"Unknown post-process action: {known}")
+            raise ValueError(f"Unknown post-process action: {known}")
 
 
 def load_configs(args=None) -> Config:
@@ -118,22 +128,28 @@ def load_configs(args=None) -> Config:
     }
     if "favorite_list" in toml_config:
         for key, value in toml_config["favorite_list"].items():
-            if isinstance(value, str):
-                # 简单格式: fid = "path"
-                favorite_list[key] = FavoriteListConfig(fid=key, path=value)
-            elif isinstance(value, dict):
-                # 复杂格式: [favorite_list.taskname] with fid, path, name, postprocess
-                favorite_list[key] = FavoriteListConfig(
-                    fid=str(value["fid"]),
-                    path=value["path"],
-                    name=value.get("name"),
-                    name_group=value.get("name_group"),
-                    postprocess=[
-                        _post_process_match(p) for p in value.get("postprocess", [])
-                    ],
+            try:
+                if isinstance(value, str):
+                    # 简单格式: fid = "path"
+                    favorite_list[key] = FavoriteListConfig(fid=key, path=value)
+                elif isinstance(value, dict):
+                    # 复杂格式: [favorite_list.taskname] with fid, path, name, postprocess
+                    favorite_list[key] = FavoriteListConfig(
+                        fid=str(value["fid"]),
+                        path=value["path"],
+                        name=value.get("name"),
+                        name_group=value.get("name_group"),
+                        postprocess=[
+                            _post_process_match(p)
+                            for p in value.get("postprocess", [])
+                        ],
+                    )
+                else:
+                    raise ValueError(f"unsupported value type: {type(value).__name__}")
+            except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                logger.warning(
+                    f"Skip invalid favorite_list item {key!r}: {exc}; value={value!r}"
                 )
-            else:
-                raise ValueError(f"Invalid favorite_list configuration: {value}")
 
     config = Config(
         config_file=args.config,
