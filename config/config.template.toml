@@ -13,22 +13,24 @@ bili_jct = "" # **必填项**
 # dedeuserid = ""
 # ac_time_value = ""
 
-[favorite_list]
+
 # # 收藏夹同步
+# [favorite_list.任务名]
+# fid = 123                                      # 收藏夹id，必填项
+# path = "temp_downloads/"                       # 下载存储路径，必填项
+# name = "({bvid}){auto}"                        # 文件命名模版，选填项，默认为yutto原生模板 
+# postprocess = [{ action = "move", fid = 345 }] # 后处理操作，选填项，默认为空列表
 #
-# ## 简单模式
-# 处理简单的收藏夹下载任务
-# 用键值对表示，键是收藏夹id（fid），值是下载的存储路径
-# <fid> = "<download_path>"
-#
-# ## 复杂模式
 # 1. 支持设置任务名
-# 2. 可以在下载后进行一些操作
+# 2. 支持模板命名
+# 2. 可以在下载后进行一些后处理操作
 #    支持的操作：move (移动到其他收藏夹), remove (从收藏夹移除)
 #
-# ## 复杂模式的参数说明
 #
-# ### 1. path 模板替换
+# ## 模板命名说明
+# 最终文件保存的路径是 `path模版+name模版` 的组合
+# 
+# ### path 模板替换 (提供文件夹模板）
 # 支持:
 #   {YYYY}   四位数年份
 #   {YY}     两位数年份
@@ -40,29 +42,28 @@ bili_jct = "" # **必填项**
 # 示例：
 # path = "downloads/{YYYY}{MM}"
 # 
-# ### 2. name 模板替换
+# ### name 模板替换 (提供文件命名的模板）（name当中也可以y用`/`设置子路径）
+# 支持:
 # yutto原生模板，参考 https://yutto.nyakku.moe/guide/cli/basic#%E5%AD%98%E6%94%BE%E5%AD%90%E8%B7%AF%E5%BE%84%E6%A8%A1%E6%9D%BF
 # 示例：
-# name = "{name}({bvid})"
-# 
-# 最终文件保存的路径是 path模版+name模版 （name当中也可以设置子路径）
-
-
+# name = "{auto}({bvid})"
 
 # ### 特殊示例：API接口的任务下载到"sync/"目录
 # fid为-1用来表示通过API接口收到的下载任务
--1 = "sync/"
+[favorite_list.task0]
+fid = -1
+path = "sync/"
 
 # ### 示例1: 移动操作 - 将视频从收藏夹123移动到收藏夹345
 [favorite_list.task1]
 fid = 123
 path = "temp_downloads/"
-name = "{name}({bvid})"
+name = "({bvid}){auto}"
 postprocess = [{ action = "move", fid = 345 }]
 
 # ### 示例2: 移除操作 - 下载后从收藏夹456移除视频
 [favorite_list.task2]
 fid = 456
 path = "downloads/"
-name = "{name}({bvid})"
+name = "({bvid}){auto}"
 postprocess = [{ action = "remove" }]
