@@ -1,5 +1,5 @@
 # ============ Frontend Build Stage ============
-FROM node:20-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
