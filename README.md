@@ -45,7 +45,7 @@ mkidr sync/       # 下载文件存储目录
 ```yaml
 services:
   blsync:
-    image: oxygenkun1/blsync:latest
+    image: ghcr.io/oxygenkun/blsync:latest
     container_name: blsync
     ports:
       - "8000:8000"
