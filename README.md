@@ -103,8 +103,7 @@ uv run bs -c config/config.toml
 
 该项目实现过程中主要参考借鉴了如下的项目，感谢他们的贡献：
 
-- [bili-sync](https://github.com/amtoaer/bili-sync) 项目功能和配置文件参考
-- [bili-sync-yt-dlp](https://github.com/cap153/bili-sync-yt-dlp) 基础代码逻辑参考
+- [bili-sync](https://github.com/amtoaer/bili-sync) 项目功能和配置的参考
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) B 站的第三方接口文档
-- [bilibili-api](https://github.com/Nemo2011/bilibili-api) 使用 Python 调用接口的参考实现
-- [yutto](https://github.com/yutto-dev/yutto) 使用 yutto 下载视频
+- [bilibili-api](https://github.com/Nemo2011/bilibili-api) B 站接口 Python SDK 封装 
+- [yutto](https://github.com/yutto-dev/yutto) B 站视频下载器
