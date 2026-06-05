@@ -1,6 +1,7 @@
 """Test FastAPI routes and endpoints."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -120,16 +121,16 @@ class TestCreateTask:
         assert isinstance(data["task_id"], int)
 
     def test_create_task_already_completed(self, test_client, test_dal):
-        """Test creating a task that already exists with DONE status."""
+        """Test creating a task that already exists with COMPLETED status."""
         task_data = {
             "bid": "BV123456",
             "favid": "fav123",
         }
 
-        # Create a done task
+        # Create a completed task
         asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
         task_key = '{"bvid": "BV123456", "favid": "fav123"}'
-        asyncio.run(test_dal.update_task_status(task_key, TaskStatus.DONE))
+        asyncio.run(test_dal.update_task_status(task_key, TaskStatus.COMPLETED))
 
         # Try to create same task again
         # API first checks has_bili_video_task, which returns True for completed tasks
@@ -177,7 +178,7 @@ class TestGetTaskStatus:
         assert data["ready"] == 0
         assert data["consuming"] == 0
         assert data["downloading"] == 0
-        assert data["done"] == 0
+        assert data["completed"] == 0
         assert data["failed"] == 0
 
     def test_get_task_status_with_tasks(self, test_client, test_dal):
@@ -191,7 +192,7 @@ class TestGetTaskStatus:
         # Update statuses
         asyncio.run(
             test_dal.update_task_status(
-                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE
+                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.COMPLETED
             )
         )
         asyncio.run(
@@ -217,7 +218,7 @@ class TestGetTaskStatus:
         assert data["ready"] == 0
         assert data["consuming"] == 1
         assert data["downloading"] == 1
-        assert data["done"] == 1
+        assert data["completed"] == 1
         assert data["failed"] == 1
 
 
@@ -318,7 +319,7 @@ class TestGetTasks:
         # Update statuses
         asyncio.run(
             test_dal.update_task_status(
-                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.DONE
+                '{"bvid": "BV1", "favid": "fav1"}', TaskStatus.COMPLETED
             )
         )
         asyncio.run(
@@ -328,12 +329,41 @@ class TestGetTasks:
         )
 
         # Filter by done status
-        response = test_client.get("/api/tasks?status=done")
+        response = test_client.get("/api/tasks?status=completed")
 
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["status"] == "done"
+        assert data["items"][0]["status"] == "completed"
+
+    def test_get_tasks_includes_completed_task_files(
+        self, test_client, test_dal, tmp_path
+    ):
+        """Test task list includes file summaries for completed tasks."""
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"video")
+        task = asyncio.run(
+            test_dal.create_bili_video_task(
+                "BV123456",
+                "fav123",
+                {"downloaded_files": [str(video)]},
+            )
+        )
+        asyncio.run(test_dal.update_task_status(task.task_key, TaskStatus.COMPLETED))
+
+        response = test_client.get("/api/tasks")
+
+        assert response.status_code == 200
+        item = response.json()["items"][0]
+        assert item["files"] == [
+            {
+                "index": 0,
+                "name": "video.mp4",
+                "size": 5,
+                "download_url": f"/file/{task.id}/0",
+            }
+        ]
+        assert str(video) not in json.dumps(item["files"])
 
     def test_get_tasks_invalid_status(self, test_client):
         """Test getting tasks with invalid status filter."""
@@ -466,6 +496,113 @@ class TestTaskEvents:
         assert stream_task.cancelled()
 
 
+class TestFileRoutes:
+    """Tests for task-bound file endpoints."""
+
+    def _create_completed_task_with_files(self, test_dal, files):
+        task = asyncio.run(
+            test_dal.create_bili_video_task(
+                "BV123456",
+                "fav123",
+                {"bid": "BV123456", "task_name": "fav123"},
+            )
+        )
+        asyncio.run(
+            test_dal.update_task_downloaded_files(
+                task.task_key,
+                [str(path) for path in files],
+            )
+        )
+        asyncio.run(test_dal.update_task_status(task.task_key, TaskStatus.COMPLETED))
+        return task
+
+    def test_get_task_files_success(self, test_client, test_dal, tmp_path):
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"video")
+        task = self._create_completed_task_with_files(test_dal, [video])
+
+        response = test_client.get(f"/file/{task.id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == task.id
+        assert data["files"] == [
+            {
+                "index": 0,
+                "name": "video.mp4",
+                "size": 5,
+                "download_url": f"/file/{task.id}/0",
+            }
+        ]
+        assert str(video) not in response.text
+
+    def test_download_task_file_success(self, test_client, test_dal, tmp_path):
+        video = tmp_path / "video.mkv"
+        video.write_bytes(b"video-content")
+        task = self._create_completed_task_with_files(test_dal, [video])
+
+        response = test_client.get(f"/file/{task.id}/0")
+
+        assert response.status_code == 200
+        assert response.content == b"video-content"
+        assert "inline" in response.headers["content-disposition"]
+        assert 'filename="video.mkv"' in response.headers["content-disposition"]
+        assert response.headers["content-type"] == "video/x-matroska"
+
+    def test_get_task_files_missing_task(self, test_client):
+        response = test_client.get("/file/99999")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_get_task_files_unfinished_task(self, test_client, test_dal, tmp_path):
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"video")
+        task = asyncio.run(
+            test_dal.create_bili_video_task(
+                "BV123456",
+                "fav123",
+                {"downloaded_files": [str(video)]},
+            )
+        )
+
+        response = test_client.get(f"/file/{task.id}")
+
+        assert response.status_code == 409
+        assert "not completed" in response.json()["detail"].lower()
+
+    def test_get_task_files_missing_file(self, test_client, test_dal, tmp_path):
+        task = self._create_completed_task_with_files(
+            test_dal,
+            [tmp_path / "missing.mp4"],
+        )
+
+        response = test_client.get(f"/file/{task.id}")
+
+        assert response.status_code == 404
+        assert "no downloaded video files" in response.json()["detail"].lower()
+
+    def test_download_task_file_invalid_index(self, test_client, test_dal, tmp_path):
+        video = tmp_path / "video.mp4"
+        video.write_bytes(b"video")
+        task = self._create_completed_task_with_files(test_dal, [video])
+
+        response = test_client.get(f"/file/{task.id}/1")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_get_task_files_ignores_non_video_files(self, test_client, test_dal, tmp_path):
+        cover = tmp_path / "cover.jpg"
+        cover.write_bytes(b"cover")
+        task = self._create_completed_task_with_files(test_dal, [cover])
+
+        response = test_client.get(f"/file/{task.id}")
+
+        assert response.status_code == 404
+        assert "no downloaded video files" in response.json()["detail"].lower()
+
+
 class TestUpdateTaskStatus:
     """Tests for PUT /api/tasks/{task_id}/status endpoint."""
 
@@ -519,7 +656,7 @@ class TestUpdateTaskStatus:
 
         assert response.status_code == 200
 
-    def test_update_status_to_done(self, test_dal):
+    def test_update_status_to_completed(self, test_dal):
         """Test updating task status to done."""
         # Create a task
         task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
@@ -530,7 +667,7 @@ class TestUpdateTaskStatus:
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "done"}
+                    f"/api/tasks/{task.id}/status", json={"status": "completed"}
                 )
 
         assert response.status_code == 200
@@ -594,7 +731,7 @@ class TestUpdateTaskStatus:
             with patch("blsync.api.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
-                    "/api/tasks/99999/status", json={"status": "done"}
+                    "/api/tasks/99999/status", json={"status": "completed"}
                 )
 
         assert response.status_code == 404
@@ -603,7 +740,7 @@ class TestUpdateTaskStatus:
     def test_update_status_invalid_task_id(self):
         """Test updating status with invalid task ID format."""
         client = TestClient(app)
-        response = client.put("/api/tasks/invalid/status", json={"status": "done"})
+        response = client.put("/api/tasks/invalid/status", json={"status": "completed"})
 
         assert response.status_code == 422  # Validation error
 

@@ -28,6 +28,9 @@ from blsync.progress import DownloadProgressEvent, ProgressEventType
 _yutto_download_paths: contextvars.ContextVar[list[pathlib.Path] | None] = (
     contextvars.ContextVar("_yutto_download_paths", default=None)
 )
+_yutto_output_paths: contextvars.ContextVar[list[pathlib.Path] | None] = (
+    contextvars.ContextVar("_yutto_output_paths", default=None)
+)
 _suppress_yutto_info: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_suppress_yutto_info", default=False
 )
@@ -195,7 +198,9 @@ async def iter_download_video_progress(
             )
         )
         try:
-            await _run_yutto_download_in_thread(yutto_args, options.verbose, emit, bvid)
+            downloaded_paths = await _run_yutto_download_in_thread(
+                yutto_args, options.verbose, emit, bvid
+            )
         except YuttoRecoverableDownloadError as e:
             emit(
                 DownloadProgressEvent(
@@ -212,13 +217,14 @@ async def iter_download_video_progress(
                 options.should_use_batch_mode,
             )
             try:
-                await _run_yutto_download_in_thread(
+                downloaded_paths = await _run_yutto_download_in_thread(
                     yutto_args,
                     options.verbose,
                     emit,
                     bvid,
                 )
             except Exception as retry_error:
+                logger.exception(f"Failed to download {bvid} after yutto retry")
                 emit(
                     DownloadProgressEvent(
                         event=ProgressEventType.FAILED,
@@ -236,9 +242,11 @@ async def iter_download_video_progress(
                         bvid=bvid,
                         status="completed",
                         overall_percent=100.0,
+                        downloaded_files=[str(path) for path in downloaded_paths],
                     )
                 )
         except Exception as e:
+            logger.exception(f"Failed to download {bvid} with yutto")
             emit(
                 DownloadProgressEvent(
                     event=ProgressEventType.FAILED,
@@ -256,6 +264,7 @@ async def iter_download_video_progress(
                     bvid=bvid,
                     status="completed",
                     overall_percent=100.0,
+                    downloaded_files=[str(path) for path in downloaded_paths],
                 )
             )
         finally:
@@ -283,14 +292,72 @@ async def _record_yutto_process_download(ctx, client, episode_data, options):
     paths = _yutto_download_paths.get()
     if paths is not None:
         paths.append(pathlib.Path(episode_data["path"]))
+    output_path: pathlib.Path | None = None
+    output_paths = _yutto_output_paths.get()
+    if output_paths is not None:
+        try:
+            output_path = _resolve_yutto_output_path(episode_data, options)
+            output_paths.append(output_path)
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve yutto output path for {episode_data['path']}: {e}"
+            )
+            output_paths.append(pathlib.Path(episode_data["path"]))
     _yutto_episode_name.set(pathlib.Path(episode_data["path"]).name)
     if _yutto_episode_index.get() is None:
         _yutto_episode_index.set(1)
     if _yutto_episode_count.get() is None:
         _yutto_episode_count.set(1)
+    if (
+        output_path is not None
+        and output_path.exists()
+        and not options.get("overwrite", False)
+    ):
+        logger.info(f"Yutto output file already exists, skip download: {output_path}")
+        _yutto_completed_episode_progress.set(float(_yutto_episode_index.get() or 1))
+        return yutto_downloader.DownloadState.SKIP
     result = await _original_yutto_process_download(ctx, client, episode_data, options)
     _yutto_completed_episode_progress.set(float(_yutto_episode_index.get() or 1))
     return result
+
+
+def _resolve_yutto_output_path(episode_data, options) -> pathlib.Path:
+    output_dir, _tmp_dir, filename = yutto_downloader.resolve_path(
+        options["output_dir"],
+        options["tmp_dir"],
+        episode_data["path"],
+    )
+
+    videos = episode_data["videos"]
+    audios = episode_data["audios"]
+    video = yutto_downloader.select_video(
+        videos,
+        options["video_quality"],
+        options["video_download_codec"],
+        options["video_download_codec_priority"],
+    )
+    audio = yutto_downloader.select_audio(
+        audios,
+        options["audio_quality"],
+        options["audio_download_codec"],
+    )
+    will_download_video = video is not None and options["require_video"]
+    will_download_audio = audio is not None and options["require_audio"]
+
+    output_format = ".mp4"
+    if not will_download_video:
+        if options["output_format_audio_only"] != "infer":
+            output_format = "." + options["output_format_audio_only"]
+        elif will_download_audio and audio["codec"] == "flac":
+            output_format = ".flac"
+        else:
+            output_format = ".m4a"
+    elif options["output_format"] != "infer":
+        output_format = "." + options["output_format"]
+    elif will_download_audio and audio is not None and audio["codec"] == "flac":
+        output_format = ".mkv"
+
+    return output_dir / f"{filename}{output_format}"
 
 
 def _filtered_yutto_logger_info(cls, string, *print_args, **print_kwargs):
@@ -376,8 +443,8 @@ async def _run_yutto_download_in_thread(
     verbose: bool,
     progress_callback: Callable[[DownloadProgressEvent], None] | None = None,
     bvid: str | None = None,
-) -> None:
-    await asyncio.to_thread(
+) -> list[pathlib.Path]:
+    return await asyncio.to_thread(
         _run_yutto_download, yutto_args, verbose, progress_callback, bvid
     )
 
@@ -409,7 +476,7 @@ def _run_yutto_download(
     verbose: bool,
     progress_callback: Callable[[DownloadProgressEvent], None] | None = None,
     bvid: str | None = None,
-) -> None:
+) -> list[pathlib.Path]:
     """
     Run yutto directly through its Python entry points.
 
@@ -421,7 +488,9 @@ def _run_yutto_download(
     ctx = FetcherContext()
     initial_validation(ctx, args)
     paths: list[pathlib.Path] = []
+    output_paths: list[pathlib.Path] = []
     paths_token = _yutto_download_paths.set(paths)
+    output_paths_token = _yutto_output_paths.set(output_paths)
     suppress_token = _suppress_yutto_info.set(not verbose)
     callback_token = _yutto_progress_callback.set(progress_callback)
     bvid_token = _yutto_bvid.set(bvid)
@@ -431,6 +500,7 @@ def _run_yutto_download(
     completed_token = _yutto_completed_episode_progress.set(0.0)
     try:
         run_download(ctx, flatten_args(args, parser))
+        return output_paths
     except Exception as e:
         if _is_yutto_invalid_resume_error(e):
             raise YuttoRecoverableDownloadError(paths) from e
@@ -443,6 +513,7 @@ def _run_yutto_download(
         _yutto_bvid.reset(bvid_token)
         _yutto_progress_callback.reset(callback_token)
         _suppress_yutto_info.reset(suppress_token)
+        _yutto_output_paths.reset(output_paths_token)
         _yutto_download_paths.reset(paths_token)
 
 

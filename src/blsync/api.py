@@ -14,9 +14,9 @@ from loguru import logger
 from pydantic import BaseModel
 
 from blsync import get_global_configs
-from blsync.consumer.bilibili import BiliVideoTaskContext
+from blsync.consumer.bilibili import VIDEO_FILE_SUFFIXES, BiliVideoTaskContext
 from blsync.database import get_task_dal
-from blsync.model.task import TaskStatus
+from blsync.model.task import TaskModel, TaskStatus
 from blsync.progress import get_progress_broker
 from blsync.scraper import BScraper
 
@@ -27,6 +27,9 @@ STATIC_DIR = BASE_DIR / "static"
 
 # API 路由器（带 /api 前缀）
 api_router = APIRouter()
+
+# 文件路由器（不带 /api 前缀）
+file_router = APIRouter()
 
 # 前端路由器（不带前缀）
 frontend_router = APIRouter()
@@ -41,6 +44,119 @@ class TaskRequest(BaseModel):
 class UpdateTaskStatusRequest(BaseModel):
     status: str  # 新状态：ready, consuming, downloading, done, failed
     error_message: str | None = None  # 失败时的错误信息（可选）
+
+
+VIDEO_MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".flv": "video/x-flv",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+}
+
+
+def _task_downloaded_video_files(task: TaskModel) -> list[Path]:
+    downloaded_files = task.task_context_dict.get("downloaded_files", [])
+    if not isinstance(downloaded_files, list):
+        return []
+
+    files: list[Path] = []
+    for path_value in downloaded_files:
+        if not isinstance(path_value, str):
+            continue
+
+        path = Path(path_value)
+        if path.suffix.lower() not in VIDEO_FILE_SUFFIXES:
+            continue
+        if not path.exists() or not path.is_file():
+            continue
+
+        files.append(path)
+
+    return files
+
+
+def _downloaded_video_files_from_task_data(task_data: str) -> list[Path]:
+    try:
+        downloaded_files = json.loads(task_data).get("downloaded_files", [])
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(downloaded_files, list):
+        return []
+
+    files: list[Path] = []
+    for path_value in downloaded_files:
+        if not isinstance(path_value, str):
+            continue
+
+        path = Path(path_value)
+        if path.suffix.lower() not in VIDEO_FILE_SUFFIXES:
+            continue
+        if not path.exists() or not path.is_file():
+            continue
+
+        files.append(path)
+
+    return files
+
+
+def _task_file_summaries(task_id: int, files: list[Path]) -> list[dict[str, object]]:
+    return [
+        {
+            "index": index,
+            "name": path.name,
+            "size": path.stat().st_size,
+            "download_url": f"/file/{task_id}/{index}",
+        }
+        for index, path in enumerate(files)
+    ]
+
+
+async def _get_completed_task_for_file(task_id: int) -> TaskModel:
+    task_dal = get_task_dal()
+    task = await task_dal.get_task_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    if task.status != TaskStatus.COMPLETED.value:
+        raise HTTPException(status_code=409, detail=f"Task {task_id} is not completed")
+    return task
+
+
+@file_router.get("/file/{task_id}", tags=["文件"], summary="获取任务下载文件列表")
+async def get_task_files(task_id: int):
+    """Return video files recorded for a completed task."""
+    task = await _get_completed_task_for_file(task_id)
+    files = _task_downloaded_video_files(task)
+    if not files:
+        raise HTTPException(status_code=404, detail="No downloaded video files found")
+
+    return {
+        "task_id": task_id,
+        "files": _task_file_summaries(task_id, files),
+    }
+
+
+@file_router.get(
+    "/file/{task_id}/{file_index}",
+    tags=["文件"],
+    summary="下载任务视频文件",
+)
+async def download_task_file(task_id: int, file_index: int) -> FileResponse:
+    """Download one recorded video file by task id and file index."""
+    task = await _get_completed_task_for_file(task_id)
+    files = _task_downloaded_video_files(task)
+    if file_index < 0 or file_index >= len(files):
+        raise HTTPException(status_code=404, detail="Downloaded file not found")
+
+    path = files[file_index]
+    return FileResponse(
+        path=str(path),
+        filename=path.name,
+        media_type=VIDEO_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+        content_disposition_type="inline",
+    )
 
 
 @frontend_router.get("/", tags=["前端"], summary="前端页面")
@@ -233,6 +349,12 @@ async def get_tasks(
     result = await task_dal.get_tasks_paginated(
         page=page, page_size=page_size, status=status
     )
+    for item in result["items"]:
+        item["files"] = []
+        if item["status"] != TaskStatus.COMPLETED.value:
+            continue
+        files = _downloaded_video_files_from_task_data(item["task_data"])
+        item["files"] = _task_file_summaries(item["id"], files)
 
     return result
 

@@ -276,6 +276,13 @@ class TaskDAL:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def get_task_by_id(self, task_id: int) -> TaskModel | None:
+        """Get a task by its primary key."""
+        async with self.async_session() as session:
+            stmt = select(TaskModel).where(TaskModel.id == task_id)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
     async def update_task_status(
         self,
         task_key: str,
@@ -315,6 +322,28 @@ class TaskDAL:
             task = result.scalars().first()
             if task is not None:
                 self._publish_status_event(task, status, error_message)
+            return task
+
+    async def update_task_downloaded_files(
+        self,
+        task_key: str,
+        downloaded_files: list[str],
+    ) -> TaskModel | None:
+        """Merge downloaded file paths into a task's JSON context."""
+        async with self.async_session() as session:
+            stmt = select(TaskModel).where(TaskModel.task_key == task_key)
+            result = await session.execute(stmt)
+            task = result.scalar_one_or_none()
+
+            if task is None:
+                return None
+
+            task_data = task.task_context_dict
+            task_data["downloaded_files"] = downloaded_files
+            task.task_data = json.dumps(task_data)
+
+            await session.commit()
+            await session.refresh(task)
             return task
 
     async def get_tasks_by_status(self, status: TaskStatus) -> list[TaskModel]:

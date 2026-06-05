@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from loguru import logger
 
 from blsync import get_global_configs
-from blsync.api import api_router, frontend_router
+from blsync.api import api_router, file_router, frontend_router
 from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.database import get_semaphore, get_task_dal
@@ -68,6 +68,11 @@ async def process_single_task(task: Task, task_key_str: str):
 
             # 添加超时控制
             await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
+            if isinstance(task, BiliVideoTask):
+                await task_dal.update_task_downloaded_files(
+                    task_key_str,
+                    [str(path) for path in task.downloaded_files],
+                )
             logger.info(f"Task {(bvid, favid)} completed successfully")
 
             # Update status to done
@@ -300,6 +305,7 @@ app = FastAPI(lifespan=lifespan)
 
 # 注册路由 - API 路由优先，避免被前端 catch-all 路由拦截
 app.include_router(api_router, prefix="/api")  # API 路由 /api/*
+app.include_router(file_router)  # 文件路由 /file/*
 app.include_router(frontend_router)  # 根路由 / (前端页面)
 
 

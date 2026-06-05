@@ -32,6 +32,8 @@ from blsync.progress import (
 )
 from blsync.scraper import BScraper
 
+VIDEO_FILE_SUFFIXES = {".mp4", ".m4v", ".mkv", ".flv", ".mov", ".webm"}
+
 
 class BiliVideoTaskContext(TaskContext):
     """Bilibili视频下载任务上下文"""
@@ -51,6 +53,7 @@ class BiliVideoTask(Task):
         self._fav_config = self._config.favorite_list.get(
             self._task_context.task_name, self._config.favorite_list["-1"]
         )
+        self.downloaded_files: list[pathlib.Path] = []
 
     def get_task_key(self) -> tuple:
         return (self._task_context.bid, self._task_context.task_name)
@@ -111,6 +114,8 @@ class BiliVideoTask(Task):
         # )
 
         download_result = False
+        downloaded_paths: list[pathlib.Path] = []
+        download_error_message: str | None = None
         async for event in iter_download_video_progress(
             bvid=bid,
             download_path=fav_download_path,
@@ -120,6 +125,8 @@ class BiliVideoTask(Task):
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
         ):
+            if event.downloaded_files is not None:
+                downloaded_paths = [pathlib.Path(path) for path in event.downloaded_files]
             event = self._with_task_id(event)
             self._publish_progress(event)
             self._log_progress(event)
@@ -127,9 +134,13 @@ class BiliVideoTask(Task):
                 download_result = True
             elif event.event == ProgressEventType.FAILED:
                 download_result = False
+                download_error_message = event.message
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
+            self.downloaded_files = self._filter_video_files(
+                fav_download_path, downloaded_paths
+            )
             logger.info(f"Recorded {bid} to database")
 
             # 执行下载后处理
@@ -139,7 +150,58 @@ class BiliVideoTask(Task):
                 raise Exception(f"Postprocess for {bid} failed")
         else:
             logger.warning(f"Skipping postprocess for {bid} due to download failure")
-            raise Exception(f"Failed to download video {bid}")
+            message = f"Failed to download video {bid}"
+            if download_error_message:
+                message = f"{message}: {download_error_message}"
+            raise Exception(message)
+
+    @staticmethod
+    def _filter_video_files(
+        download_path: pathlib.Path,
+        yutto_paths: list[pathlib.Path],
+    ) -> list[pathlib.Path]:
+        base_path = download_path.resolve()
+        files: list[pathlib.Path] = []
+        seen: set[pathlib.Path] = set()
+
+        for yutto_path in yutto_paths:
+            path = yutto_path if yutto_path.is_absolute() else base_path / yutto_path
+            for candidate in BiliVideoTask._iter_video_file_candidates(path):
+                try:
+                    resolved_path = candidate.resolve()
+                except OSError as e:
+                    logger.warning(f"Failed to resolve downloaded path {candidate}: {e}")
+                    continue
+
+                if resolved_path in seen:
+                    continue
+
+                seen.add(resolved_path)
+                files.append(resolved_path)
+
+        return files
+
+    @staticmethod
+    def _iter_video_file_candidates(path: pathlib.Path) -> list[pathlib.Path]:
+        candidates: list[pathlib.Path] = []
+
+        if path.is_file() and path.suffix.lower() in VIDEO_FILE_SUFFIXES:
+            candidates.append(path)
+        elif path.is_dir():
+            candidates.extend(
+                child
+                for child in path.rglob("*")
+                if child.is_file() and child.suffix.lower() in VIDEO_FILE_SUFFIXES
+            )
+
+        if path.parent.exists():
+            candidates.extend(
+                child
+                for child in path.parent.glob(f"{path.name}*")
+                if child.is_file() and child.suffix.lower() in VIDEO_FILE_SUFFIXES
+            )
+
+        return candidates
 
     def _with_task_id(self, event: DownloadProgressEvent) -> DownloadProgressEvent:
         return DownloadProgressEvent(

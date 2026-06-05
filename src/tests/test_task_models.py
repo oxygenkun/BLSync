@@ -1,6 +1,7 @@
 """Test Task database models and SQLite creation."""
 
 import asyncio
+import json
 import tempfile
 from pathlib import Path
 
@@ -30,6 +31,29 @@ async def test_create_tables_in_memory():
         )
         table_exists = result.first() is not None
         assert table_exists, "Tasks table should exist"
+
+    await dal.close()
+
+
+@pytest.mark.asyncio
+async def test_update_task_downloaded_files_merges_context():
+    """Test storing downloaded file paths without losing existing task context."""
+    dal = BiliVideoTaskDAL("sqlite+aiosqlite:///:memory:")
+    await dal.create_tables()
+
+    task_context = {"bid": "BV123456", "task_name": "fav123", "selected_episodes": [0]}
+    task = await dal.create_bili_video_task("BV123456", "fav123", task_context)
+
+    updated_task = await dal.update_task_downloaded_files(
+        task.task_key,
+        ["/app/sync/video.mp4"],
+    )
+
+    assert updated_task is not None
+    data = json.loads(updated_task.task_data)
+    assert data["bid"] == "BV123456"
+    assert data["selected_episodes"] == [0]
+    assert data["downloaded_files"] == ["/app/sync/video.mp4"]
 
     await dal.close()
 
@@ -113,17 +137,17 @@ async def test_crud_operations():
     assert exists, "Task should exist"
 
     # Update task status
-    updated_task = await dal.update_task_status(task_key, TaskStatus.DONE)
+    updated_task = await dal.update_task_status(task_key, TaskStatus.COMPLETED)
     assert updated_task is not None, "Task should be updated"
-    assert updated_task.status == TaskStatus.DONE.value
+    assert updated_task.status == TaskStatus.COMPLETED.value
     assert updated_task.completed_at is not None, "Task should have completion time"
 
     # Get tasks by status
     ready_tasks = await dal.get_tasks_by_status(TaskStatus.READY)
     assert len(ready_tasks) == 0, "No ready tasks should exist"
 
-    done_tasks = await dal.get_tasks_by_status(TaskStatus.DONE)
-    assert len(done_tasks) == 1, "One done task should exist"
+    done_tasks = await dal.get_tasks_by_status(TaskStatus.COMPLETED)
+    assert len(done_tasks) == 1, "One completed task should exist"
 
     # Delete task
     deleted = await dal.delete_task(task_key)
@@ -180,7 +204,7 @@ async def test_task_stats():
     await dal.create_bili_video_task("BV2", "fav2", {})
 
     task_key = make_bili_video_key("BV1", "fav1")
-    await dal.update_task_status(task_key, TaskStatus.DONE)
+    await dal.update_task_status(task_key, TaskStatus.COMPLETED)
 
     task_key2 = make_bili_video_key("BV2", "fav2")
     await dal.update_task_status(task_key2, TaskStatus.FAILED, "Test error")
@@ -191,7 +215,7 @@ async def test_task_stats():
     assert stats[TaskStatus.READY.value] == 0
     assert stats[TaskStatus.CONSUMING.value] == 0
     assert stats[TaskStatus.DOWNLOADING.value] == 0
-    assert stats[TaskStatus.DONE.value] == 1
+    assert stats[TaskStatus.COMPLETED.value] == 1
     assert stats[TaskStatus.FAILED.value] == 1
 
     await dal.close()

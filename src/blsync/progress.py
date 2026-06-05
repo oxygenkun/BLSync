@@ -28,6 +28,7 @@ class DownloadProgressEvent:
     total_bytes: int | None = None
     speed_bytes_per_second: float | None = None
     message: str | None = None
+    downloaded_files: list[str] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
