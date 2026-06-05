@@ -95,6 +95,56 @@ uv run bs -c config/config.toml
 
 ![image](https://github.com/user-attachments/assets/76c298d7-6437-4e12-8333-a80f4802b8d1)
 
+
+# 手动下载接口
+
+服务启动后，可以通过 HTTP API 手动添加 Bilibili 视频下载任务。
+
+```http
+POST /api/task/bili
+Content-Type: application/json
+```
+
+请求参数：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `bid` | string | 是 | Bilibili 视频 BV 号，例如 `BV1xxxx` |
+| `favid` | string | 否 | 收藏夹 id，默认 `-1`。`-1` 表示通过 API 手动添加的任务 |
+| `selected_episodes` | number[] | 否 | 需要下载的分 P 索引列表，不传则下载全部分 P |
+
+示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/task/bili" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bid": "BV1xxxx",
+    "favid": "-1",
+    "selected_episodes": [0, 1]
+  }'
+```
+
+返回示例：
+
+```json
+{
+  "status": "success",
+  "message": "Task BV1xxxx added to database",
+  "task_id": 1
+}
+```
+
+如果任务已存在，接口会更新任务上下文；当已存在任务处于 `failed` 或 `completed` 状态时，会重置为待下载状态。
+
+手动下载任务默认使用 `favid = -1`，需要在配置文件中为该任务配置下载目录：
+
+```toml
+[favorite_list.task0]
+fid = -1
+path = "sync/"
+```
+
 # 更新日志
 
 [CHANGELOG](./CHANGELOG.md)
