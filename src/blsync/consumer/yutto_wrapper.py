@@ -218,7 +218,22 @@ async def iter_download_video_progress(
                     emit,
                     bvid,
                 )
+            except SystemExit as retry_error:
+                message = f"yutto exited with code {retry_error.code}"
+                logger.exception(
+                    f"Failed to download {bvid} after cleanup: {message}"
+                )
+                emit(
+                    DownloadProgressEvent(
+                        event=ProgressEventType.FAILED,
+                        task_id=None,
+                        bvid=bvid,
+                        status="failed",
+                        message=message,
+                    )
+                )
             except Exception as retry_error:
+                logger.exception(f"Failed to download {bvid} after cleanup")
                 emit(
                     DownloadProgressEvent(
                         event=ProgressEventType.FAILED,
@@ -238,7 +253,20 @@ async def iter_download_video_progress(
                         overall_percent=100.0,
                     )
                 )
+        except SystemExit as e:
+            message = f"yutto exited with code {e.code}"
+            logger.exception(f"Failed to download {bvid}: {message}")
+            emit(
+                DownloadProgressEvent(
+                    event=ProgressEventType.FAILED,
+                    task_id=None,
+                    bvid=bvid,
+                    status="failed",
+                    message=message,
+                )
+            )
         except Exception as e:
+            logger.exception(f"Failed to download {bvid}")
             emit(
                 DownloadProgressEvent(
                     event=ProgressEventType.FAILED,

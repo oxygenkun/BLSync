@@ -111,6 +111,7 @@ class BiliVideoTask(Task):
         # )
 
         download_result = False
+        download_error: str | None = None
         async for event in iter_download_video_progress(
             bvid=bid,
             download_path=fav_download_path,
@@ -127,6 +128,7 @@ class BiliVideoTask(Task):
                 download_result = True
             elif event.event == ProgressEventType.FAILED:
                 download_result = False
+                download_error = event.message
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
@@ -138,8 +140,12 @@ class BiliVideoTask(Task):
             except Exception:
                 raise Exception(f"Postprocess for {bid} failed")
         else:
-            logger.warning(f"Skipping postprocess for {bid} due to download failure")
-            raise Exception(f"Failed to download video {bid}")
+            error_detail = download_error or "download ended without a completion event"
+            logger.warning(
+                f"Skipping postprocess for {bid} due to download failure: "
+                f"{error_detail}"
+            )
+            raise RuntimeError(f"Failed to download video {bid}: {error_detail}")
 
     def _with_task_id(self, event: DownloadProgressEvent) -> DownloadProgressEvent:
         return DownloadProgressEvent(
