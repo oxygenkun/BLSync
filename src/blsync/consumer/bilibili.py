@@ -122,13 +122,21 @@ class BiliVideoTask(Task):
             selected_episodes=self._task_context.selected_episodes,
         ):
             event = self._with_task_id(event)
-            self._publish_progress(event)
-            self._log_progress(event)
             if event.event == ProgressEventType.COMPLETED:
                 download_result = True
+                event = DownloadProgressEvent(
+                    **{
+                        **event.to_dict(),
+                        "event": ProgressEventType.STATUS,
+                        "status": "postprocessing",
+                        "message": "下载完成，正在进行合并或后处理",
+                    }
+                )
             elif event.event == ProgressEventType.FAILED:
                 download_result = False
                 download_error = event.message
+            self._publish_progress(event)
+            self._log_progress(event)
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:

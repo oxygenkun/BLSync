@@ -113,11 +113,18 @@ async def task_consumer():
     - failed: 执行失败
     """
     task_dal = get_task_dal()
+    config = get_global_configs()
+    running_tasks: set[asyncio.Task[None]] = set()
 
     while True:
         try:
+            available_slots = config.max_concurrent_tasks - len(running_tasks)
+            if available_slots <= 0:
+                await asyncio.sleep(0.2)
+                continue
+
             # Get ready tasks from database
-            ready_tasks = await task_dal.get_ready_tasks()
+            ready_tasks = await task_dal.get_ready_tasks(limit=available_slots)
 
             if not ready_tasks:
                 await asyncio.sleep(1)
@@ -143,7 +150,11 @@ async def task_consumer():
 
                     # Create async task for execution (non-blocking)
                     # Pass task_key_str for database updates
-                    asyncio.create_task(process_single_task(task, task_model.task_key))
+                    running_task = asyncio.create_task(
+                        process_single_task(task, task_model.task_key)
+                    )
+                    running_tasks.add(running_task)
+                    running_task.add_done_callback(running_tasks.discard)
                     logger.info(
                         f"[task_consumer] Scheduled task {task_model.task_key}, "
                         f"{len(ready_tasks)} ready tasks remaining"
@@ -269,6 +280,11 @@ async def start_background_tasks():
     # Initialize database tables
     task_dal = get_task_dal()
     await task_dal.create_tables()
+    reset_count = await task_dal.reset_interrupted_tasks()
+    if reset_count:
+        logger.warning(
+            f"Recovered {reset_count} interrupted tasks and returned them to READY"
+        )
 
     task1 = asyncio.create_task(task_producer())
     task2 = asyncio.create_task(task_consumer())

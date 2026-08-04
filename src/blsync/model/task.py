@@ -354,6 +354,28 @@ class TaskDAL:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
+    async def reset_interrupted_tasks(self) -> int:
+        """Return tasks left active by a previous process to the ready queue."""
+        async with self.async_session() as session:
+            stmt = (
+                update(TaskModel)
+                .where(
+                    TaskModel.status.in_(
+                        (
+                            TaskStatus.CONSUMING.value,
+                            TaskStatus.DOWNLOADING.value,
+                        )
+                    )
+                )
+                .values(
+                    status=TaskStatus.READY.value,
+                    error_message=None,
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return int(result.rowcount or 0)
+
     async def get_task_stats(self) -> dict[str, int]:
         """
         Get task statistics.
