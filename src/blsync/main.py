@@ -182,7 +182,7 @@ async def task_producer():
     2. 如果不在，添加任务（READY）
     3. 如果在表中：
        - READY/CONSUMING/DOWNLOADING/DONE：跳过
-       - FAILED：更新为 READY（重试）
+       - FAILED：默认跳过；仅在 retry_failed_tasks 开启时更新为 READY
     """
     logger.info("[task_producer] Starting task producer")
     config = get_global_configs()
@@ -201,6 +201,7 @@ async def task_producer():
 async def scan_favorites_once() -> dict[str, int]:
     """Scan configured favorites once and enqueue missing or failed tasks."""
     async with _scan_lock:
+        config = get_global_configs()
         bs = get_scraper()
         task_dal = get_task_dal()
         stats = {"created": 0, "reset": 0, "skipped": 0}
@@ -218,12 +219,19 @@ async def scan_favorites_once() -> dict[str, int]:
                 stats["created"] += 1
                 logger.info(f"[task_producer] Added new task {bvid} for {task_name}")
             elif status == TaskStatus.FAILED:
-                task_key = make_bili_video_key(bvid, task_name)
-                await task_dal.update_task_status(task_key, TaskStatus.READY)
-                stats["reset"] += 1
-                logger.info(
-                    f"[task_producer] Reset failed task {bvid} for {task_name} to READY"
-                )
+                if config.retry_failed_tasks:
+                    task_key = make_bili_video_key(bvid, task_name)
+                    await task_dal.update_task_status(task_key, TaskStatus.READY)
+                    stats["reset"] += 1
+                    logger.info(
+                        f"[task_producer] Reset failed task {bvid} "
+                        f"for {task_name} to READY"
+                    )
+                else:
+                    stats["skipped"] += 1
+                    logger.debug(
+                        f"[task_producer] Failed task {bvid} requires manual retry"
+                    )
             elif status in (
                 TaskStatus.READY,
                 TaskStatus.CONSUMING,
