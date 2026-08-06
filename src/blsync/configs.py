@@ -98,6 +98,10 @@ class Config(BaseModel):
     request_timeout: int
     max_concurrent_tasks: int
     task_timeout: int
+    download_retry_limit: int
+    download_stall_timeout: float
+    download_url_refresh_retries: int
+    retry_failed_tasks: bool
     credential: ConfigCredential
     favorite_list: dict[str, FavoriteListConfig]
 
@@ -175,6 +179,12 @@ def load_configs(args=None) -> Config:
             if args.task_timeout is not None
             else toml_config.get("task_timeout", 300)
         ),
+        download_retry_limit=toml_config.get("download_retry_limit", 10),
+        download_stall_timeout=toml_config.get("download_stall_timeout", 120.0),
+        download_url_refresh_retries=toml_config.get(
+            "download_url_refresh_retries", 2
+        ),
+        retry_failed_tasks=toml_config.get("retry_failed_tasks", False),
         credential=ConfigCredential(
             sessdata=toml_config["credential"]["sessdata"],
             bili_jct=toml_config["credential"]["bili_jct"],

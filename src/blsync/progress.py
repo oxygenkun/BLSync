@@ -73,6 +73,8 @@ class TaskProgressBroker:
         queue: asyncio.Queue[DownloadProgressEvent] = asyncio.Queue()
         self._global_subscribers.add(queue)
         try:
+            for task_id in sorted(self._latest):
+                yield self._latest[task_id]
             while True:
                 yield await queue.get()
         finally:

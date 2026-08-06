@@ -115,7 +115,7 @@ class BiliVideoTask(Task):
 
         download_result = False
         downloaded_paths: list[pathlib.Path] = []
-        download_error_message: str | None = None
+        download_error: str | None = None
         async for event in iter_download_video_progress(
             bvid=bid,
             download_path=fav_download_path,
@@ -124,17 +124,28 @@ class BiliVideoTask(Task):
             name_template=name_template,
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
+            retry_limit=self._config.download_retry_limit,
+            stall_timeout=self._config.download_stall_timeout,
+            url_refresh_retries=self._config.download_url_refresh_retries,
         ):
             if event.downloaded_files is not None:
                 downloaded_paths = [pathlib.Path(path) for path in event.downloaded_files]
             event = self._with_task_id(event)
-            self._publish_progress(event)
-            self._log_progress(event)
             if event.event == ProgressEventType.COMPLETED:
                 download_result = True
+                event = DownloadProgressEvent(
+                    **{
+                        **event.to_dict(),
+                        "event": ProgressEventType.STATUS,
+                        "status": "postprocessing",
+                        "message": "下载完成，正在进行合并或后处理",
+                    }
+                )
             elif event.event == ProgressEventType.FAILED:
                 download_result = False
-                download_error_message = event.message
+                download_error = event.message
+            self._publish_progress(event)
+            self._log_progress(event)
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
@@ -149,11 +160,12 @@ class BiliVideoTask(Task):
             except Exception:
                 raise Exception(f"Postprocess for {bid} failed")
         else:
-            logger.warning(f"Skipping postprocess for {bid} due to download failure")
-            message = f"Failed to download video {bid}"
-            if download_error_message:
-                message = f"{message}: {download_error_message}"
-            raise Exception(message)
+            error_detail = download_error or "download ended without a completion event"
+            logger.warning(
+                f"Skipping postprocess for {bid} due to download failure: "
+                f"{error_detail}"
+            )
+            raise RuntimeError(f"Failed to download video {bid}: {error_detail}")
 
     @staticmethod
     def _filter_video_files(

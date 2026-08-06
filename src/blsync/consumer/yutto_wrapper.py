@@ -8,11 +8,16 @@ yutto 下载封装。
 import asyncio
 import contextvars
 import pathlib
+import random
 import shutil
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 
+import h2.exceptions
+import httpx
 import yutto.download_manager as yutto_download_manager
 import yutto.downloader.downloader as yutto_downloader
 import yutto.downloader.progressbar as yutto_progressbar
@@ -20,7 +25,8 @@ from loguru import logger
 from yutto.__main__ import flatten_args, run_download
 from yutto.cli.cli import cli, handle_default_subcommand
 from yutto.utils.console.logger import Logger as YuttoLogger
-from yutto.utils.fetcher import FetcherContext
+from yutto.utils.fetcher import Fetcher, FetcherContext
+from yutto.utils.file_buffer import AsyncFileBuffer
 from yutto.validator import initial_validation
 
 from blsync.progress import DownloadProgressEvent, ProgressEventType
@@ -52,6 +58,15 @@ _yutto_episode_name: contextvars.ContextVar[str | None] = contextvars.ContextVar
 _yutto_completed_episode_progress: contextvars.ContextVar[float] = (
     contextvars.ContextVar("_yutto_completed_episode_progress", default=0.0)
 )
+_yutto_cancel_event: contextvars.ContextVar[threading.Event | None] = (
+    contextvars.ContextVar("_yutto_cancel_event", default=None)
+)
+_yutto_retry_limit: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_yutto_retry_limit", default=10
+)
+_yutto_stall_timeout: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "_yutto_stall_timeout", default=120.0
+)
 
 _original_yutto_process_download = yutto_download_manager.process_download
 _original_yutto_logger_info = YuttoLogger.info
@@ -71,6 +86,9 @@ class YuttoDownloadOptions:
     name_template: str | None = None
     verbose: bool = False
     selected_episodes: list[int] | None = None
+    retry_limit: int = 10
+    stall_timeout: float = 120.0
+    url_refresh_retries: int = 2
 
     @property
     def video_url(self) -> str:
@@ -93,6 +111,14 @@ class YuttoRecoverableDownloadError(Exception):
     def __init__(self, paths: list[pathlib.Path]):
         self.paths = paths
         super().__init__("yutto partial download state is invalid")
+
+
+class YuttoDownloadStalledError(Exception):
+    """A media block stopped making progress after bounded reconnect attempts."""
+
+
+class YuttoDownloadCancelledError(Exception):
+    """The owning BLSync task requested cooperative downloader shutdown."""
 
 
 async def download_video(
@@ -169,6 +195,9 @@ async def iter_download_video_progress(
     name_template: str | None = None,
     verbose: bool = False,
     selected_episodes: list[int] | None = None,
+    retry_limit: int = 10,
+    stall_timeout: float = 120.0,
+    url_refresh_retries: int = 2,
 ) -> AsyncIterator[DownloadProgressEvent]:
     """Yield structured yutto download progress events."""
     options = YuttoDownloadOptions(
@@ -180,6 +209,9 @@ async def iter_download_video_progress(
         name_template=name_template,
         verbose=verbose,
         selected_episodes=selected_episodes,
+        retry_limit=retry_limit,
+        stall_timeout=stall_timeout,
+        url_refresh_retries=url_refresh_retries,
     )
     yutto_args = _build_yutto_args(options)
     loop = asyncio.get_running_loop()
@@ -189,6 +221,10 @@ async def iter_download_video_progress(
         loop.call_soon_threadsafe(queue.put_nowait, event)
 
     async def run_download() -> None:
+        retry_limit_token = _yutto_retry_limit.set(max(options.retry_limit, 1))
+        stall_timeout_token = _yutto_stall_timeout.set(
+            max(options.stall_timeout, 1.0)
+        )
         emit(
             DownloadProgressEvent(
                 event=ProgressEventType.STATUS,
@@ -197,56 +233,73 @@ async def iter_download_video_progress(
                 status="started",
             )
         )
+        cleaned_invalid_resume = False
+        url_refresh_attempts = 0
         try:
-            downloaded_paths = await _run_yutto_download_in_thread(
-                yutto_args, options.verbose, emit, bvid
-            )
-        except YuttoRecoverableDownloadError as e:
+            while True:
+                try:
+                    downloaded_paths = await _run_yutto_download_in_thread(
+                        yutto_args,
+                        options.verbose,
+                        emit,
+                        bvid,
+                    )
+                    break
+                except YuttoRecoverableDownloadError as error:
+                    if cleaned_invalid_resume:
+                        raise
+                    cleaned_invalid_resume = True
+                    emit(
+                        DownloadProgressEvent(
+                            event=ProgressEventType.STATUS,
+                            task_id=None,
+                            bvid=bvid,
+                            status="retrying",
+                            message="invalid resume state; cleaning partial files",
+                        )
+                    )
+                    _cleanup_yutto_partial_downloads(
+                        options.download_path,
+                        error.paths,
+                        options.should_use_batch_mode,
+                    )
+                except YuttoDownloadStalledError as error:
+                    if url_refresh_attempts >= options.url_refresh_retries:
+                        raise
+                    url_refresh_attempts += 1
+                    delay = min(2 ** (url_refresh_attempts - 1), 10)
+                    emit(
+                        DownloadProgressEvent(
+                            event=ProgressEventType.STATUS,
+                            task_id=None,
+                            bvid=bvid,
+                            status="refreshing",
+                            message=(
+                                f"download stalled; refreshing media URL "
+                                f"({url_refresh_attempts}/"
+                                f"{options.url_refresh_retries})"
+                            ),
+                        )
+                    )
+                    logger.warning(
+                        f"Download {bvid} stalled: {error}; "
+                        f"refreshing media URL after {delay}s"
+                    )
+                    await asyncio.sleep(delay)
+        except SystemExit as e:
+            message = f"yutto exited with code {e.code}"
+            logger.exception(f"Failed to download {bvid}: {message}")
             emit(
                 DownloadProgressEvent(
-                    event=ProgressEventType.STATUS,
+                    event=ProgressEventType.FAILED,
                     task_id=None,
                     bvid=bvid,
-                    status="retrying",
-                    message="invalid resume state",
+                    status="failed",
+                    message=message,
                 )
             )
-            _cleanup_yutto_partial_downloads(
-                options.download_path,
-                e.paths,
-                options.should_use_batch_mode,
-            )
-            try:
-                downloaded_paths = await _run_yutto_download_in_thread(
-                    yutto_args,
-                    options.verbose,
-                    emit,
-                    bvid,
-                )
-            except Exception as retry_error:
-                logger.exception(f"Failed to download {bvid} after yutto retry")
-                emit(
-                    DownloadProgressEvent(
-                        event=ProgressEventType.FAILED,
-                        task_id=None,
-                        bvid=bvid,
-                        status="failed",
-                        message=str(retry_error),
-                    )
-                )
-            else:
-                emit(
-                    DownloadProgressEvent(
-                        event=ProgressEventType.COMPLETED,
-                        task_id=None,
-                        bvid=bvid,
-                        status="completed",
-                        overall_percent=100.0,
-                        downloaded_files=[str(path) for path in downloaded_paths],
-                    )
-                )
         except Exception as e:
-            logger.exception(f"Failed to download {bvid} with yutto")
+            logger.exception(f"Failed to download {bvid}")
             emit(
                 DownloadProgressEvent(
                     event=ProgressEventType.FAILED,
@@ -268,19 +321,30 @@ async def iter_download_video_progress(
                 )
             )
         finally:
+            _yutto_stall_timeout.reset(stall_timeout_token)
+            _yutto_retry_limit.reset(retry_limit_token)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
     task = asyncio.create_task(run_download())
-    while True:
-        event = await queue.get()
-        if event is None:
-            break
-        yield event
-    await task
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield event
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 def _install_yutto_patches() -> None:
     yutto_download_manager.process_download = _record_yutto_process_download
+    Fetcher.download_file_with_offset = staticmethod(
+        _bounded_yutto_download_file_with_offset
+    )
     YuttoLogger.info = classmethod(_filtered_yutto_logger_info)
     YuttoLogger.custom = classmethod(_filtered_yutto_logger_custom)
     YuttoLogger.new_line = classmethod(_filtered_yutto_logger_new_line)
@@ -444,9 +508,30 @@ async def _run_yutto_download_in_thread(
     progress_callback: Callable[[DownloadProgressEvent], None] | None = None,
     bvid: str | None = None,
 ) -> list[pathlib.Path]:
-    return await asyncio.to_thread(
-        _run_yutto_download, yutto_args, verbose, progress_callback, bvid
+    cancel_event = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _run_yutto_download,
+            yutto_args,
+            verbose,
+            progress_callback,
+            bvid,
+            cancel_event,
+            _yutto_retry_limit.get(),
+            _yutto_stall_timeout.get(),
+        )
     )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancel_event.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(worker), timeout=10)
+        except TimeoutError:
+            logger.warning("Timed out while stopping the yutto worker thread")
+        except Exception as error:
+            logger.debug(f"Yutto worker stopped during cancellation: {error}")
+        raise
 
 
 async def _retry_yutto_download(
@@ -476,6 +561,9 @@ def _run_yutto_download(
     verbose: bool,
     progress_callback: Callable[[DownloadProgressEvent], None] | None = None,
     bvid: str | None = None,
+    cancel_event: threading.Event | None = None,
+    retry_limit: int = 10,
+    stall_timeout: float = 120.0,
 ) -> list[pathlib.Path]:
     """
     Run yutto directly through its Python entry points.
@@ -498,6 +586,9 @@ def _run_yutto_download(
     episode_count_token = _yutto_episode_count.set(None)
     episode_name_token = _yutto_episode_name.set(None)
     completed_token = _yutto_completed_episode_progress.set(0.0)
+    cancel_token = _yutto_cancel_event.set(cancel_event)
+    retry_limit_token = _yutto_retry_limit.set(max(retry_limit, 1))
+    stall_timeout_token = _yutto_stall_timeout.set(max(stall_timeout, 1.0))
     try:
         run_download(ctx, flatten_args(args, parser))
         return output_paths
@@ -506,6 +597,9 @@ def _run_yutto_download(
             raise YuttoRecoverableDownloadError(paths) from e
         raise
     finally:
+        _yutto_stall_timeout.reset(stall_timeout_token)
+        _yutto_retry_limit.reset(retry_limit_token)
+        _yutto_cancel_event.reset(cancel_token)
         _yutto_completed_episode_progress.reset(completed_token)
         _yutto_episode_name.reset(episode_name_token)
         _yutto_episode_count.reset(episode_count_token)
@@ -515,6 +609,92 @@ def _run_yutto_download(
         _suppress_yutto_info.reset(suppress_token)
         _yutto_output_paths.reset(output_paths_token)
         _yutto_download_paths.reset(paths_token)
+
+
+async def _bounded_yutto_download_file_with_offset(
+    ctx: FetcherContext,
+    client: httpx.AsyncClient,
+    url: str,
+    mirrors: list[str],
+    file_buffer: AsyncFileBuffer,
+    offset: int,
+    size: int | None,
+) -> None:
+    """Download one block with bounded retries, stall detection and cancellation."""
+    async with ctx.download_guard():
+        headers = client.headers.copy()
+        url_pool = [url, *mirrors]
+        block_offset = 0
+        consecutive_failures = 0
+        last_progress_at = time.monotonic()
+
+        while size is None or block_offset < size:
+            _raise_if_yutto_cancelled()
+            stalled_for = time.monotonic() - last_progress_at
+            if stalled_for >= _yutto_stall_timeout.get():
+                raise YuttoDownloadStalledError(
+                    f"{file_buffer.file_path} made no progress for "
+                    f"{stalled_for:.1f}s"
+                )
+
+            selected_url = random.choice(url_pool)
+            range_end = offset + size - 1 if size is not None else ""
+            headers["Range"] = f"bytes={offset + block_offset}-{range_end}"
+
+            try:
+                async with client.stream(
+                    "GET",
+                    selected_url,
+                    headers=headers,
+                    timeout=httpx.Timeout(7, connect=3),
+                ) as response:
+                    response.raise_for_status()
+                    received_bytes = 0
+                    async for chunk in response.aiter_bytes(2**16):
+                        _raise_if_yutto_cancelled()
+                        await file_buffer.write(chunk, offset + block_offset)
+                        chunk_size = len(chunk)
+                        block_offset += chunk_size
+                        received_bytes += chunk_size
+                        consecutive_failures = 0
+                        last_progress_at = time.monotonic()
+
+                    if size is None or block_offset >= size:
+                        return
+                    if received_bytes == 0:
+                        raise httpx.RemoteProtocolError(
+                            "media response ended before the requested range"
+                        )
+            except (httpx.HTTPError, h2.exceptions.H2Error) as error:
+                consecutive_failures += 1
+                error_type = type(error).__name__
+                logger.warning(
+                    f"File {file_buffer.file_path} download failed "
+                    f"({error_type}); retry "
+                    f"{consecutive_failures}/{_yutto_retry_limit.get()}"
+                )
+                if consecutive_failures >= _yutto_retry_limit.get():
+                    raise YuttoDownloadStalledError(
+                        f"{file_buffer.file_path} exceeded "
+                        f"{_yutto_retry_limit.get()} consecutive retries "
+                        f"after {error_type}"
+                    ) from error
+
+                stalled_for = time.monotonic() - last_progress_at
+                if stalled_for >= _yutto_stall_timeout.get():
+                    raise YuttoDownloadStalledError(
+                        f"{file_buffer.file_path} made no progress for "
+                        f"{stalled_for:.1f}s after {error_type}"
+                    ) from error
+
+                retry_delay = min(0.5 * 2 ** (consecutive_failures - 1), 5.0)
+                await asyncio.sleep(retry_delay)
+
+
+def _raise_if_yutto_cancelled() -> None:
+    cancel_event = _yutto_cancel_event.get()
+    if cancel_event is not None and cancel_event.is_set():
+        raise YuttoDownloadCancelledError("yutto download was cancelled")
 
 
 async def _capture_yutto_show_progress(file_buffers, total_size: int) -> None:
