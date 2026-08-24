@@ -10,6 +10,7 @@ import contextvars
 import pathlib
 import random
 import shutil
+import ssl
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -665,7 +666,12 @@ async def _bounded_yutto_download_file_with_offset(
                         raise httpx.RemoteProtocolError(
                             "media response ended before the requested range"
                         )
-            except (httpx.HTTPError, h2.exceptions.H2Error, ValueError) as error:
+            except (
+                httpx.HTTPError,
+                h2.exceptions.H2Error,
+                ssl.SSLError,
+                ValueError,
+            ) as error:
                 if isinstance(error, ValueError) and (
                     "semaphore released too many times" not in str(error).lower()
                 ):
