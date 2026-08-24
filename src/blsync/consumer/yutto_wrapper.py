@@ -7,6 +7,7 @@ yutto 下载封装。
 
 import asyncio
 import contextvars
+import hashlib
 import pathlib
 import random
 import shutil
@@ -75,6 +76,9 @@ _original_yutto_logger_custom = YuttoLogger.custom
 _original_yutto_logger_new_line = YuttoLogger.new_line
 _original_yutto_show_progress = yutto_progressbar.show_progress
 _original_yutto_downloader_show_progress = yutto_downloader.show_progress
+
+_YUTTO_FILENAME_MAX_BYTES = 200
+_YUTTO_FILENAME_TAIL_BYTES = 48
 
 
 @dataclass(frozen=True)
@@ -354,6 +358,16 @@ def _install_yutto_patches() -> None:
 
 
 async def _record_yutto_process_download(ctx, client, episode_data, options):
+    episode_path = pathlib.Path(episode_data["path"])
+    shortened_name = _shorten_filename(episode_path.name)
+    if shortened_name != episode_path.name:
+        shortened_path = episode_path.with_name(shortened_name)
+        logger.warning(
+            f"Yutto filename is too long; shortened {episode_path.name!r} "
+            f"to {shortened_name!r}"
+        )
+        episode_data["path"] = shortened_path
+
     paths = _yutto_download_paths.get()
     if paths is not None:
         paths.append(pathlib.Path(episode_data["path"]))
@@ -384,6 +398,25 @@ async def _record_yutto_process_download(ctx, client, episode_data, options):
     result = await _original_yutto_process_download(ctx, client, episode_data, options)
     _yutto_completed_episode_progress.set(float(_yutto_episode_index.get() or 1))
     return result
+
+
+def _shorten_filename(
+    filename: str,
+    max_bytes: int = _YUTTO_FILENAME_MAX_BYTES,
+) -> str:
+    """Shorten a yutto base filename while leaving room for artifact suffixes."""
+    encoded = filename.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return filename
+
+    digest = hashlib.sha256(encoded).hexdigest()[:8]
+    marker = f"~{digest}~"
+    marker_bytes = marker.encode("ascii")
+    tail_budget = min(_YUTTO_FILENAME_TAIL_BYTES, max_bytes - len(marker_bytes))
+    head_budget = max_bytes - len(marker_bytes) - tail_budget
+    head = encoded[:head_budget].decode("utf-8", errors="ignore")
+    tail = encoded[-tail_budget:].decode("utf-8", errors="ignore")
+    return f"{head}{marker}{tail}"
 
 
 def _resolve_yutto_output_path(episode_data, options) -> pathlib.Path:
