@@ -284,7 +284,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.49" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", specifier = ">=0.47.0" },
-    { name = "yutto", specifier = ">=2.2.0" },
+    { name = "yutto", specifier = ">=2.2.0,<2.3" },
 ]
 
 [package.metadata.requires-dev]
