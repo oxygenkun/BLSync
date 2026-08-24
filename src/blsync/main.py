@@ -1,4 +1,7 @@
 import asyncio
+import contextlib
+import os
+import socket
 import sys
 from contextlib import asynccontextmanager
 
@@ -23,6 +26,9 @@ from blsync.progress import (
 from blsync.scraper import BScraper
 
 _scan_lock = asyncio.Lock()
+WORKER_ID = os.environ.get("WORKER_ID", os.environ.get("HOSTNAME", socket.gethostname()))
+CONTROL_POLL_SECONDS = 1.0
+LEASE_SECONDS = 30.0
 
 
 def setup_logger():
@@ -36,6 +42,23 @@ def get_scraper():
     return BScraper(get_global_configs())
 
 
+async def _monitor_task_control(
+    task_id: int,
+    execution: asyncio.Task[None],
+    pause_detected: asyncio.Event,
+) -> None:
+    """Renew ownership and stop local work when DB requests a pause."""
+    task_dal = get_task_dal()
+    while not execution.done():
+        await asyncio.sleep(CONTROL_POLL_SECONDS)
+        action = await task_dal.renew_lease(task_id, WORKER_ID, LEASE_SECONDS)
+        if action is None or action == "pause":
+            if action == "pause":
+                pause_detected.set()
+            execution.cancel()
+            return
+
+
 async def process_single_task(task: Task, task_key_str: str):
     """
     处理单个任务
@@ -47,11 +70,27 @@ async def process_single_task(task: Task, task_key_str: str):
     config = get_global_configs()
     task_dal = get_task_dal()
     bvid, favid = parse_bili_video_key(task_key_str)
+    task_id = task._task_context.task_id if isinstance(task, BiliVideoTask) else None
+    if task_id is None:
+        raise ValueError("A persisted task id is required for DB-controlled execution")
 
     async with get_semaphore():  # 限制并发数
+        execution: asyncio.Task[None] | None = None
+        monitor: asyncio.Task[None] | None = None
+        pause_detected = asyncio.Event()
         try:
-            # Update status to downloading before starting download
-            await task_dal.update_task_status(task_key_str, TaskStatus.DOWNLOADING)
+            action = await task_dal.renew_lease(task_id, WORKER_ID, LEASE_SECONDS)
+            if action != "run":
+                await task_dal.update_owned_task_status(
+                    task_id, WORKER_ID, TaskStatus.PAUSED, release=True
+                )
+                return
+
+            owned = await task_dal.update_owned_task_status(
+                task_id, WORKER_ID, TaskStatus.DOWNLOADING
+            )
+            if owned is None:
+                return
             if (
                 isinstance(task, BiliVideoTask)
                 and task._task_context.task_id is not None
@@ -67,28 +106,45 @@ async def process_single_task(task: Task, task_key_str: str):
                 )
 
             # 添加超时控制
-            await asyncio.wait_for(task.execute(), timeout=config.task_timeout)
+            execution = asyncio.create_task(task.execute())
+            monitor = asyncio.create_task(
+                _monitor_task_control(task_id, execution, pause_detected)
+            )
+            await asyncio.wait_for(execution, timeout=config.task_timeout)
             if isinstance(task, BiliVideoTask):
-                await task_dal.update_task_downloaded_files(
-                    task_key_str,
+                await task_dal.update_owned_task_downloaded_files(
+                    task_id,
+                    WORKER_ID,
                     [str(path) for path in task.downloaded_files],
                 )
             logger.info(f"Task {(bvid, favid)} completed successfully")
 
             # Update status to done
-            await task_dal.update_task_status(task_key_str, TaskStatus.COMPLETED)
+            await task_dal.update_owned_task_status(
+                task_id, WORKER_ID, TaskStatus.COMPLETED, release=True
+            )
 
+        except asyncio.CancelledError:
+            if pause_detected.is_set():
+                logger.info(f"Task {(bvid, favid)} paused by user request")
+                await task_dal.update_owned_task_status(
+                    task_id, WORKER_ID, TaskStatus.PAUSED, release=True
+                )
+                return
+            if execution is not None:
+                execution.cancel()
+            raise
         except asyncio.TimeoutError:
             error_msg = f"Task {(bvid, favid)} timed out after {config.task_timeout}s"
             logger.exception(error_msg)
-            await task_dal.update_task_status(
-                task_key_str, TaskStatus.FAILED, error_msg
+            await task_dal.update_owned_task_status(
+                task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
             )
         except Exception as e:
             error_msg = f"Error processing task {(bvid, favid)}: {e}"
             logger.exception(error_msg)
-            await task_dal.update_task_status(
-                task_key_str, TaskStatus.FAILED, error_msg
+            await task_dal.update_owned_task_status(
+                task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
             )
             if (
                 isinstance(task, BiliVideoTask)
@@ -104,6 +160,11 @@ async def process_single_task(task: Task, task_key_str: str):
                         message=error_msg,
                     ),
                 )
+        finally:
+            if monitor is not None:
+                monitor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await monitor
 
 
 async def task_consumer():
@@ -128,8 +189,12 @@ async def task_consumer():
                 await asyncio.sleep(0.2)
                 continue
 
-            # Get ready tasks from database
-            ready_tasks = await task_dal.get_ready_tasks(limit=available_slots)
+            recovered = await task_dal.recover_expired_tasks()
+            if recovered:
+                logger.warning(f"Recovered {recovered} tasks with expired leases")
+            ready_tasks = await task_dal.claim_ready_tasks(
+                WORKER_ID, available_slots, LEASE_SECONDS
+            )
 
             if not ready_tasks:
                 await asyncio.sleep(1)
@@ -137,11 +202,6 @@ async def task_consumer():
 
             # Process ready tasks
             for task_model in ready_tasks:
-                # Mark task as consuming immediately when scheduled
-                await task_dal.update_task_status(
-                    task_model.task_key, TaskStatus.CONSUMING
-                )
-
                 try:
                     # Deserialize task context and create task instance
                     task_context_dict = task_model.task_context_dict
@@ -167,12 +227,21 @@ async def task_consumer():
                 except Exception as e:
                     error_msg = f"Failed to create task for {task_model.task_key}: {e}"
                     logger.exception(error_msg)
-                    await task_dal.update_task_status(
-                        task_model.task_key, TaskStatus.FAILED, error_msg
+                    await task_dal.update_owned_task_status(
+                        task_model.id,
+                        WORKER_ID,
+                        TaskStatus.FAILED,
+                        error_msg,
+                        release=True,
                     )
 
             await asyncio.sleep(1)
 
+        except asyncio.CancelledError:
+            for running_task in running_tasks:
+                running_task.cancel()
+            await asyncio.gather(*running_tasks, return_exceptions=True)
+            raise
         except Exception as e:
             logger.error(f"Error in task_consumer: {e}")
             await asyncio.sleep(5)
@@ -241,6 +310,8 @@ async def scan_favorites_once() -> dict[str, int]:
                 TaskStatus.READY,
                 TaskStatus.CONSUMING,
                 TaskStatus.DOWNLOADING,
+                TaskStatus.PAUSING,
+                TaskStatus.PAUSED,
                 TaskStatus.COMPLETED,
             ):
                 stats["skipped"] += 1
@@ -290,15 +361,6 @@ async def start_background_tasks():
     2. task_consumer: 从数据库获取待处理任务并执行
     3. delete_stale_tasks: 定期清理已完成任务
     """
-    # Initialize database tables
-    task_dal = get_task_dal()
-    await task_dal.create_tables()
-    reset_count = await task_dal.reset_interrupted_tasks()
-    if reset_count:
-        logger.warning(
-            f"Recovered {reset_count} interrupted tasks and returned them to READY"
-        )
-
     task1 = asyncio.create_task(task_producer())
     task2 = asyncio.create_task(task_consumer())
     task3 = asyncio.create_task(delete_stale_tasks())
@@ -315,13 +377,18 @@ async def lifespan(app: FastAPI):
     """
     启动Web服务前，启动后台任务ß
     """
+    task_dal = get_task_dal()
+    version = await task_dal.migrate()
+    logger.info(f"Database schema is at version {version}")
     logger.info("Starting background tasks...")
     tasks = asyncio.create_task(start_background_tasks())
-    yield
-    tasks.cancel()
-    # Close database connection
-    task_dal = get_task_dal()
-    if task_dal:
+    try:
+        yield
+    finally:
+        tasks.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tasks
+        await task_dal.release_worker_tasks(WORKER_ID)
         await task_dal.close()
 
 

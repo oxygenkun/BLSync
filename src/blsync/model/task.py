@@ -4,7 +4,7 @@ import enum
 import json
 import os
 import zoneinfo
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import (
@@ -74,6 +74,8 @@ class TaskStatus(str, enum.Enum):
     READY = "ready"
     CONSUMING = "consuming"
     DOWNLOADING = "downloading"
+    PAUSING = "pausing"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -113,6 +115,9 @@ class TaskModel(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    control_action: Mapped[str] = mapped_column(String(10), default="run")
+    worker_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
     # Unique index on task_key and regular indexes for common queries
     __table_args__ = (
@@ -120,6 +125,7 @@ class TaskModel(Base):
         Index("ix_tasks_task_type", "task_type"),
         Index("ix_tasks_status", "status"),
         Index("ix_tasks_created_at", "created_at"),
+        Index("ix_tasks_lease_expires_at", "lease_expires_at"),
     )
 
     @property
@@ -248,9 +254,14 @@ class TaskDAL:
         )
 
     async def create_tables(self):
-        """Create all database tables."""
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        """Create or migrate all database tables (kept for test compatibility)."""
+        await self.migrate()
+
+    async def migrate(self) -> int:
+        """Upgrade the database to the schema supported by this application."""
+        from blsync.schema import migrate_database
+
+        return await migrate_database(self.engine)
 
     async def drop_tables(self):
         """Drop all database tables."""
@@ -382,6 +393,231 @@ class TaskDAL:
 
             result = await session.execute(stmt)
             return list(result.scalars().all())
+
+    async def claim_ready_tasks(
+        self,
+        worker_id: str,
+        limit: int,
+        lease_seconds: float,
+    ) -> list[TaskModel]:
+        """Atomically claim up to ``limit`` runnable tasks for one worker."""
+        claimed: list[TaskModel] = []
+        for _ in range(limit):
+            async with self.async_session() as session:
+                candidate = (
+                    select(TaskModel.id)
+                    .where(
+                        TaskModel.status == TaskStatus.READY.value,
+                        TaskModel.control_action == "run",
+                        TaskModel.worker_id.is_(None),
+                    )
+                    .order_by(TaskModel.created_at, TaskModel.id)
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(TaskModel)
+                    .where(
+                        TaskModel.id == candidate,
+                        TaskModel.status == TaskStatus.READY.value,
+                        TaskModel.control_action == "run",
+                        TaskModel.worker_id.is_(None),
+                    )
+                    .values(
+                        status=TaskStatus.CONSUMING.value,
+                        worker_id=worker_id,
+                        lease_expires_at=datetime.utcnow()
+                        + timedelta(seconds=lease_seconds),
+                        error_message=None,
+                    )
+                    .returning(TaskModel)
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+                task = result.scalars().first()
+                if task is None:
+                    break
+                claimed.append(task)
+                self._publish_status_event(task, TaskStatus.CONSUMING)
+        return claimed
+
+    async def renew_lease(
+        self, task_id: int, worker_id: str, lease_seconds: float
+    ) -> str | None:
+        """Renew an owned lease and return its current database control action."""
+        async with self.async_session() as session:
+            stmt = (
+                update(TaskModel)
+                .where(TaskModel.id == task_id, TaskModel.worker_id == worker_id)
+                .values(
+                    lease_expires_at=datetime.utcnow()
+                    + timedelta(seconds=lease_seconds)
+                )
+                .returning(TaskModel.control_action)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.scalar_one_or_none()
+
+    async def update_owned_task_status(
+        self,
+        task_id: int,
+        worker_id: str,
+        status: TaskStatus,
+        error_message: str | None = None,
+        *,
+        release: bool = False,
+    ) -> TaskModel | None:
+        """Update a task only while the caller still owns its lease."""
+        values: dict[str, Any] = {"status": status.value}
+        if status == TaskStatus.COMPLETED:
+            values.update(completed_at=datetime.utcnow(), error_message=None)
+        elif status == TaskStatus.FAILED:
+            values["error_message"] = error_message
+        if release:
+            values.update(worker_id=None, lease_expires_at=None)
+
+        async with self.async_session() as session:
+            stmt = (
+                update(TaskModel)
+                .where(TaskModel.id == task_id, TaskModel.worker_id == worker_id)
+                .values(**values)
+                .returning(TaskModel)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            task = result.scalars().first()
+            if task is not None:
+                self._publish_status_event(task, status, error_message)
+            return task
+
+    async def update_owned_task_downloaded_files(
+        self,
+        task_id: int,
+        worker_id: str,
+        downloaded_files: list[str],
+    ) -> TaskModel | None:
+        """Record output paths only if the caller still owns the task."""
+        async with self.async_session() as session:
+            stmt = select(TaskModel).where(
+                TaskModel.id == task_id, TaskModel.worker_id == worker_id
+            )
+            task = (await session.execute(stmt)).scalar_one_or_none()
+            if task is None:
+                return None
+            task_data = task.task_context_dict
+            task_data["downloaded_files"] = downloaded_files
+            task.task_data = json.dumps(task_data)
+            await session.commit()
+            await session.refresh(task)
+            return task
+
+    async def request_task_pause(self, task_id: int) -> TaskModel | None:
+        """Persist a pause request and expose the appropriate transitional status."""
+        async with self.async_session() as session:
+            task = await session.get(TaskModel, task_id)
+            if task is None:
+                return None
+            if task.status == TaskStatus.READY.value:
+                task.status = TaskStatus.PAUSED.value
+                task.control_action = "pause"
+            elif task.status in (
+                TaskStatus.CONSUMING.value,
+                TaskStatus.DOWNLOADING.value,
+            ):
+                task.control_action = "pause"
+                task.status = (
+                    TaskStatus.PAUSING.value
+                    if task.worker_id is not None
+                    else TaskStatus.PAUSED.value
+                )
+            else:
+                return task
+            await session.commit()
+            await session.refresh(task)
+            self._publish_status_event(task, TaskStatus(task.status))
+            return task
+
+    async def resume_paused_task(self, task_id: int) -> TaskModel | None:
+        """Return an unowned paused task to the runnable queue."""
+        async with self.async_session() as session:
+            stmt = (
+                update(TaskModel)
+                .where(
+                    TaskModel.id == task_id,
+                    TaskModel.status == TaskStatus.PAUSED.value,
+                    TaskModel.worker_id.is_(None),
+                )
+                .values(status=TaskStatus.READY.value, control_action="run")
+                .returning(TaskModel)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            task = result.scalars().first()
+            if task is not None:
+                self._publish_status_event(task, TaskStatus.READY)
+            return task
+
+    async def recover_expired_tasks(self) -> int:
+        """Recover tasks whose owning worker stopped renewing its lease."""
+        async with self.async_session() as session:
+            now = datetime.utcnow()
+            pausing = await session.execute(
+                update(TaskModel)
+                .where(
+                    TaskModel.status == TaskStatus.PAUSING.value,
+                    TaskModel.lease_expires_at < now,
+                )
+                .values(
+                    status=TaskStatus.PAUSED.value,
+                    worker_id=None,
+                    lease_expires_at=None,
+                )
+            )
+            active = await session.execute(
+                update(TaskModel)
+                .where(
+                    TaskModel.status.in_(
+                        (TaskStatus.CONSUMING.value, TaskStatus.DOWNLOADING.value)
+                    ),
+                    TaskModel.lease_expires_at < now,
+                )
+                .values(
+                    status=TaskStatus.READY.value,
+                    worker_id=None,
+                    lease_expires_at=None,
+                    error_message=None,
+                )
+            )
+            await session.commit()
+            return int(pausing.rowcount or 0) + int(active.rowcount or 0)
+
+    async def release_worker_tasks(self, worker_id: str) -> int:
+        """Release this worker's active tasks during graceful shutdown."""
+        async with self.async_session() as session:
+            paused = await session.execute(
+                update(TaskModel)
+                .where(
+                    TaskModel.worker_id == worker_id,
+                    TaskModel.control_action == "pause",
+                )
+                .values(
+                    status=TaskStatus.PAUSED.value,
+                    worker_id=None,
+                    lease_expires_at=None,
+                )
+            )
+            ready = await session.execute(
+                update(TaskModel)
+                .where(TaskModel.worker_id == worker_id)
+                .values(
+                    status=TaskStatus.READY.value,
+                    worker_id=None,
+                    lease_expires_at=None,
+                )
+            )
+            await session.commit()
+            return int(paused.rowcount or 0) + int(ready.rowcount or 0)
 
     async def reset_interrupted_tasks(self) -> int:
         """Return tasks left active by a previous process to the ready queue."""

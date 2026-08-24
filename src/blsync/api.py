@@ -46,6 +46,16 @@ class UpdateTaskStatusRequest(BaseModel):
     error_message: str | None = None  # 失败时的错误信息（可选）
 
 
+class BatchUpdateTaskStatusRequest(BaseModel):
+    task_ids: list[int]  # 任务 id 列表
+    status: str  # 新状态：ready, consuming, downloading, done, failed
+    error_message: str | None = None  # 失败时的错误信息（可选）
+
+
+class BatchDeleteTasksRequest(BaseModel):
+    task_ids: list[int]  # 任务 id 列表
+
+
 VIDEO_MEDIA_TYPES = {
     ".mp4": "video/mp4",
     ".m4v": "video/mp4",
@@ -284,6 +294,8 @@ async def get_task_status():
         "ready": stats[TaskStatus.READY.value],
         "consuming": stats[TaskStatus.CONSUMING.value],
         "downloading": stats[TaskStatus.DOWNLOADING.value],
+        "pausing": stats[TaskStatus.PAUSING.value],
+        "paused": stats[TaskStatus.PAUSED.value],
         "completed": stats[TaskStatus.COMPLETED.value],
         "failed": stats[TaskStatus.FAILED.value],
     }
@@ -509,6 +521,146 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
         task_dal._publish_status_event(task, new_status, request.error_message)
 
         return task_dal._task_to_dict(task)
+
+
+@api_router.put("/tasks/status", tags=["任务"], summary="批量修改任务状态")
+async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
+    """
+    批量修改任务状态。
+
+    校验规则与单项修改一致：状态值必须合法；设置为 failed 时必须附带 error_message。
+    部分任务失败不影响其余任务，响应中分别返回成功和失败的 id 列表。
+    """
+    valid_statuses = {s.value for s in TaskStatus}
+    if request.status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{request.status}'. Valid values are: {', '.join(valid_statuses)}",
+        )
+
+    new_status = TaskStatus(request.status)
+    if new_status == TaskStatus.FAILED and not request.error_message:
+        raise HTTPException(
+            status_code=400,
+            detail="error_message is required when status is 'failed'",
+        )
+
+    task_dal = get_task_dal()
+
+    async with task_dal.async_session() as session:
+        from blsync.model.task import TaskModel, select
+
+        stmt = select(TaskModel).where(TaskModel.id.in_(request.task_ids))
+        result = await session.execute(stmt)
+        tasks = list(result.scalars().all())
+
+        found_ids = {task.id for task in tasks}
+        failed = [
+            {"task_id": task_id, "detail": f"Task {task_id} not found"}
+            for task_id in request.task_ids
+            if task_id not in found_ids
+        ]
+
+        for task in tasks:
+            session.add(task)
+            task.status = new_status.value
+            if new_status == TaskStatus.FAILED:
+                task.error_message = request.error_message
+            elif new_status == TaskStatus.COMPLETED:
+                task.completed_at = task.updated_at
+                task.error_message = None
+
+        await session.commit()
+
+        for task in tasks:
+            await session.refresh(task)
+            task_dal._publish_status_event(task, new_status, request.error_message)
+
+        return {"succeeded": [task.id for task in tasks], "failed": failed}
+
+
+@api_router.delete("/tasks", tags=["任务"], summary="批量删除任务")
+async def batch_delete_tasks(request: BatchDeleteTasksRequest):
+    """
+    批量删除任务。
+
+    不存在的 id 会计入 failed 列表，其余任务照常删除。
+    """
+    task_dal = get_task_dal()
+
+    async with task_dal.async_session() as session:
+        from blsync.model.task import TaskModel, delete, select
+
+        stmt = select(TaskModel.id).where(TaskModel.id.in_(request.task_ids))
+        result = await session.execute(stmt)
+        found_ids = set(result.scalars().all())
+
+        failed = [
+            {"task_id": task_id, "detail": f"Task {task_id} not found"}
+            for task_id in request.task_ids
+            if task_id not in found_ids
+        ]
+
+        if found_ids:
+            await session.execute(delete(TaskModel).where(TaskModel.id.in_(found_ids)))
+            await session.commit()
+
+        return {"succeeded": sorted(found_ids), "failed": failed}
+
+
+@api_router.post("/tasks/{task_id}/pause", tags=["任务"], summary="暂停任务")
+async def pause_task(task_id: int):
+    """
+    暂停一个任务。
+
+    - ready：直接置为 paused，不再被调度。
+    - consuming/downloading：记录暂停请求并协作式取消正在运行的下载，
+      已下载的分片保留在磁盘上，继续下载时断点续传。
+    - completed/failed/paused：不可暂停，返回 409。
+    """
+    task_dal = get_task_dal()
+    task = await task_dal.get_task_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    pausable = {
+        TaskStatus.READY.value,
+        TaskStatus.CONSUMING.value,
+        TaskStatus.DOWNLOADING.value,
+    }
+    if task.status not in pausable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} with status '{task.status}' cannot be paused",
+        )
+
+    updated = await task_dal.request_task_pause(task_id)
+    return task_dal._task_to_dict(updated)
+
+
+@api_router.post("/tasks/{task_id}/resume", tags=["任务"], summary="继续任务")
+async def resume_task(task_id: int):
+    """
+    继续一个已暂停的任务：置回 ready 由 consumer 重新调度，下载断点续传。
+    """
+    task_dal = get_task_dal()
+    task = await task_dal.get_task_by_id(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    if task.status != TaskStatus.PAUSED.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} with status '{task.status}' cannot be resumed",
+        )
+
+    updated = await task_dal.resume_paused_task(task_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} is still owned and cannot be resumed",
+        )
+    return task_dal._task_to_dict(updated)
 
 
 def start_server():

@@ -760,3 +760,233 @@ class TestUpdateTaskStatus:
                 )
 
         assert response.status_code == 422  # Validation error
+
+
+class TestBatchUpdateTaskStatus:
+    """Tests for PUT /api/tasks/status endpoint."""
+
+    def test_batch_update_status_success(self, test_client, test_dal):
+        """Test batch updating task statuses."""
+        task1 = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+        task2 = asyncio.run(test_dal.create_bili_video_task("BV2", "fav2", {}))
+
+        response = test_client.put(
+            "/api/tasks/status",
+            json={"task_ids": [task1.id, task2.id], "status": "completed"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert sorted(data["succeeded"]) == sorted([task1.id, task2.id])
+        assert data["failed"] == []
+
+        # 验证数据库中的状态确实已更新
+        response = test_client.get("/api/tasks?status=completed")
+        assert response.json()["total"] == 2
+
+    def test_batch_update_status_partial_failure(self, test_client, test_dal):
+        """Test batch update with some non-existent task ids."""
+        task = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+
+        response = test_client.put(
+            "/api/tasks/status",
+            json={"task_ids": [task.id, 99999], "status": "ready"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["succeeded"] == [task.id]
+        assert len(data["failed"]) == 1
+        assert data["failed"][0]["task_id"] == 99999
+        assert "not found" in data["failed"][0]["detail"].lower()
+
+    def test_batch_update_status_to_failed_requires_error_message(self, test_client):
+        """Test batch update to failed without error_message should fail."""
+        response = test_client.put(
+            "/api/tasks/status",
+            json={"task_ids": [1], "status": "failed"},
+        )
+
+        assert response.status_code == 400
+        assert "error_message is required" in response.json()["detail"]
+
+    def test_batch_update_status_to_failed_with_error_message(
+        self, test_client, test_dal
+    ):
+        """Test batch updating task statuses to failed with error message."""
+        task = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+
+        response = test_client.put(
+            "/api/tasks/status",
+            json={
+                "task_ids": [task.id],
+                "status": "failed",
+                "error_message": "手动批量设置为失败",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["succeeded"] == [task.id]
+
+        response = test_client.get("/api/tasks?status=failed")
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["error_message"] == "手动批量设置为失败"
+
+    def test_batch_update_status_invalid_status(self, test_client):
+        """Test batch update with invalid status value."""
+        response = test_client.put(
+            "/api/tasks/status",
+            json={"task_ids": [1], "status": "invalid_status"},
+        )
+
+        assert response.status_code == 400
+        assert "invalid status" in response.json()["detail"].lower()
+
+    def test_batch_update_status_missing_fields(self, test_client):
+        """Test batch update without required fields."""
+        response = test_client.put("/api/tasks/status", json={"status": "ready"})
+
+        assert response.status_code == 422
+
+
+class TestBatchDeleteTasks:
+    """Tests for DELETE /api/tasks endpoint."""
+
+    def test_batch_delete_success(self, test_client, test_dal):
+        """Test batch deleting tasks."""
+        task1 = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+        task2 = asyncio.run(test_dal.create_bili_video_task("BV2", "fav2", {}))
+
+        response = test_client.request(
+            "DELETE", "/api/tasks", json={"task_ids": [task1.id, task2.id]}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert sorted(data["succeeded"]) == sorted([task1.id, task2.id])
+        assert data["failed"] == []
+
+        # 验证任务确实已删除
+        response = test_client.get("/api/tasks")
+        assert response.json()["total"] == 0
+
+    def test_batch_delete_partial_failure(self, test_client, test_dal):
+        """Test batch delete with some non-existent task ids."""
+        task = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+
+        response = test_client.request(
+            "DELETE", "/api/tasks", json={"task_ids": [task.id, 99999]}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["succeeded"] == [task.id]
+        assert len(data["failed"]) == 1
+        assert data["failed"][0]["task_id"] == 99999
+
+        response = test_client.get("/api/tasks")
+        assert response.json()["total"] == 0
+
+    def test_batch_delete_missing_task_ids(self, test_client):
+        """Test batch delete without task_ids field."""
+        response = test_client.request("DELETE", "/api/tasks", json={})
+
+        assert response.status_code == 422
+
+
+class TestPauseResumeTask:
+    """Tests for POST /api/tasks/{task_id}/pause and /resume endpoints."""
+
+    def _create_task(self, test_dal, status: TaskStatus = TaskStatus.READY):
+        """Create a task in test database with the given status."""
+        task = asyncio.run(test_dal.create_bili_video_task("BV123456", "fav123", {}))
+        if status != TaskStatus.READY:
+            error_message = "test error" if status == TaskStatus.FAILED else None
+            task = asyncio.run(
+                test_dal.update_task_status(task.task_key, status, error_message)
+            )
+        return task
+
+    def test_pause_ready_task(self, test_client, test_dal):
+        """Test pausing a ready task."""
+        task = self._create_task(test_dal)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "paused"
+
+    def test_pause_downloading_task(self, test_client, test_dal):
+        """Test pausing a downloading task that is not registered as running."""
+        task = self._create_task(test_dal, TaskStatus.DOWNLOADING)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "paused"
+
+    def test_pause_completed_task_conflict(self, test_client, test_dal):
+        """Test pausing a completed task returns 409."""
+        task = self._create_task(test_dal, TaskStatus.COMPLETED)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+
+        assert response.status_code == 409
+
+    def test_pause_failed_task_conflict(self, test_client, test_dal):
+        """Test pausing a failed task returns 409."""
+        task = self._create_task(test_dal, TaskStatus.FAILED)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+
+        assert response.status_code == 409
+
+    def test_pause_already_paused_task_conflict(self, test_client, test_dal):
+        """Test pausing an already paused task returns 409."""
+        task = self._create_task(test_dal, TaskStatus.PAUSED)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+
+        assert response.status_code == 409
+
+    def test_pause_task_not_found(self, test_client):
+        """Test pausing a non-existent task returns 404."""
+        response = test_client.post("/api/tasks/99999/pause")
+
+        assert response.status_code == 404
+
+    def test_resume_paused_task(self, test_client, test_dal):
+        """Test resuming a paused task."""
+        task = self._create_task(test_dal, TaskStatus.PAUSED)
+
+        response = test_client.post(f"/api/tasks/{task.id}/resume")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+
+    def test_resume_ready_task_conflict(self, test_client, test_dal):
+        """Test resuming a non-paused task returns 409."""
+        task = self._create_task(test_dal)
+
+        response = test_client.post(f"/api/tasks/{task.id}/resume")
+
+        assert response.status_code == 409
+
+    def test_resume_task_not_found(self, test_client):
+        """Test resuming a non-existent task returns 404."""
+        response = test_client.post("/api/tasks/99999/resume")
+
+        assert response.status_code == 404
+
+    def test_pause_then_resume_roundtrip(self, test_client, test_dal):
+        """Test pause followed by resume returns the task to ready."""
+        task = self._create_task(test_dal)
+
+        response = test_client.post(f"/api/tasks/{task.id}/pause")
+        assert response.status_code == 200
+        assert response.json()["status"] == "paused"
+
+        response = test_client.post(f"/api/tasks/{task.id}/resume")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
