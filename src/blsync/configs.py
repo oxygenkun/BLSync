@@ -67,7 +67,14 @@ class RemovePostprocessConfig(BaseModel):
     action: str = "remove"
 
 
-type PostprocessConfigT = MovePostprocessConfig | RemovePostprocessConfig
+class SavePostprocessConfig(BaseModel):
+    action: str = "save"
+    fid: str
+
+
+type PostprocessConfigT = (
+    MovePostprocessConfig | RemovePostprocessConfig | SavePostprocessConfig
+)
 
 
 class FavoriteListConfig(BaseModel):
@@ -106,12 +113,14 @@ class Config(BaseModel):
     favorite_list: dict[str, FavoriteListConfig]
 
 
-def _post_process_match(value: dict) -> MovePostprocessConfig | RemovePostprocessConfig:
+def _post_process_match(value: dict) -> PostprocessConfigT:
     match value["action"]:
         case "move":
             return MovePostprocessConfig(fid=str(value["fid"]))
         case "remove":
             return RemovePostprocessConfig()
+        case "save":
+            return SavePostprocessConfig(fid=str(value["fid"]))
         case _ as known:
             raise ValueError(f"Unknown post-process action: {known}")
 

@@ -22,6 +22,7 @@ from blsync.configs import (
     ConfigCredential,
     MovePostprocessConfig,
     RemovePostprocessConfig,
+    SavePostprocessConfig,
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
 from blsync.consumer.yutto_wrapper import iter_download_video_progress
@@ -256,6 +257,10 @@ class BiliVideoTask(Task):
                     postprocess_tasks.append(
                         BiliVideoPostprocessRemove(self._task_context)
                     )
+                case SavePostprocessConfig():
+                    postprocess_tasks.append(
+                        BiliVideoPostprocessSave(self._task_context, post_config)
+                    )
                 case _:
                     logger.warning(f"Unknown postprocess action: {post_config.action}")
 
@@ -321,6 +326,31 @@ class BiliVideoPostprocessRemove(Postprocess):
             credential=credential,
         )
         logger.debug(f"Removed video {aid} from {fid}")
+
+
+class BiliVideoPostprocessSave(Postprocess):
+    """Bilibili视频后处理 - 保存到其他收藏夹并保留原收藏"""
+
+    def __init__(
+        self,
+        task_context: BiliVideoTaskContext,
+        post_config: SavePostprocessConfig,
+        config: Config | None = None,
+    ):
+        self._task_context = task_context
+        self._post_config = post_config
+
+        if not config:
+            config = get_global_configs()
+        self._config = config
+
+    async def execute(self) -> None:
+        credential = credential_from_config(self._config.credential)
+        to_fid = self._post_config.fid
+        video = Video(bvid=self._task_context.bid, credential=credential)
+
+        await video.set_favorite(add_media_ids=[int(to_fid)])
+        logger.debug(f"Saved video {self._task_context.bid} to {to_fid}")
 
 
 @lru_cache(maxsize=1000)
