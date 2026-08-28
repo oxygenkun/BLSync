@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- 新增视频元信息存储：视频与分P的标题、UP主（名称、uid）、简介、标签、点赞收藏硬币转发等统计落库（`videos`、`video_pages` 表）
+- 新增下载文件位置表（`download_files`），记录下载产物的最终实体路径与文件类型；文件传输接口优先从该表读取，历史任务回退到任务上下文
+- yutto wrapper 注入分P元信息（cid/序号/标题），下载文件记录可关联到具体分P
+
 ## [0.5.0] - 2026-05-16
 
 ### Added

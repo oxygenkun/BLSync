@@ -26,6 +26,8 @@ from blsync.configs import (
 )
 from blsync.consumer.base import Postprocess, Task, TaskContext
 from blsync.consumer.yutto_wrapper import iter_download_video_progress
+from blsync.database import get_video_dal
+from blsync.model.video import VideoModel
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
@@ -34,6 +36,24 @@ from blsync.progress import (
 from blsync.scraper import BScraper
 
 VIDEO_FILE_SUFFIXES = {".mp4", ".m4v", ".mkv", ".flv", ".mov", ".webm"}
+
+# 输出文件后缀到 download_files.file_type 的映射
+FILE_TYPE_BY_SUFFIX = {
+    **{suffix: "video" for suffix in VIDEO_FILE_SUFFIXES},
+    ".aac": "audio",
+    ".mp3": "audio",
+    ".flac": "audio",
+    ".m4a": "audio",
+    ".jpg": "cover",
+    ".jpeg": "cover",
+    ".png": "cover",
+    ".webp": "cover",
+    ".nfo": "metadata",
+    ".ass": "subtitle",
+    ".srt": "subtitle",
+    ".vtt": "subtitle",
+    ".xml": "danmaku",
+}
 
 
 class BiliVideoTaskContext(TaskContext):
@@ -99,6 +119,8 @@ class BiliVideoTask(Task):
             logger.info(f"Failed to get video info for {bid}")
             return
 
+        video_model = await self._persist_video_info(bs, bid, v_info)
+
         # 检查是否为多分P视频
         is_batch = v_info.get("videos", 1) > 1
         if is_batch:
@@ -116,6 +138,7 @@ class BiliVideoTask(Task):
 
         download_result = False
         downloaded_paths: list[pathlib.Path] = []
+        downloaded_episodes: list[dict] = []
         download_error: str | None = None
         async for event in iter_download_video_progress(
             bvid=bid,
@@ -131,6 +154,8 @@ class BiliVideoTask(Task):
         ):
             if event.downloaded_files is not None:
                 downloaded_paths = [pathlib.Path(path) for path in event.downloaded_files]
+            if event.downloaded_episodes is not None:
+                downloaded_episodes = event.downloaded_episodes
             event = self._with_task_id(event)
             if event.event == ProgressEventType.COMPLETED:
                 download_result = True
@@ -150,8 +175,14 @@ class BiliVideoTask(Task):
 
         # 只有下载成功才记录到数据库并执行后处理
         if download_result:
-            self.downloaded_files = self._filter_video_files(
+            output_files = self._collect_output_files(
                 fav_download_path, downloaded_paths
+            )
+            self.downloaded_files = [
+                path for path, file_type in output_files if file_type == "video"
+            ]
+            await self._persist_download_files(
+                video_model, fav_download_path, output_files, downloaded_episodes
             )
             logger.info(f"Recorded {bid} to database")
 
@@ -169,17 +200,24 @@ class BiliVideoTask(Task):
             raise RuntimeError(f"Failed to download video {bid}: {error_detail}")
 
     @staticmethod
-    def _filter_video_files(
+    def _classify_output_file(path: pathlib.Path) -> str | None:
+        """按后缀识别输出文件类型，未识别的返回 None。"""
+        return FILE_TYPE_BY_SUFFIX.get(path.suffix.lower())
+
+    @classmethod
+    def _collect_output_files(
+        cls,
         download_path: pathlib.Path,
         yutto_paths: list[pathlib.Path],
-    ) -> list[pathlib.Path]:
+    ) -> list[tuple[pathlib.Path, str]]:
+        """收集下载产出的最终实体文件（媒体文件及同 stem 的封面、元数据等）。"""
         base_path = download_path.resolve()
-        files: list[pathlib.Path] = []
+        files: list[tuple[pathlib.Path, str]] = []
         seen: set[pathlib.Path] = set()
 
         for yutto_path in yutto_paths:
             path = yutto_path if yutto_path.is_absolute() else base_path / yutto_path
-            for candidate in BiliVideoTask._iter_video_file_candidates(path):
+            for candidate in cls._iter_output_candidates(path):
                 try:
                     resolved_path = candidate.resolve()
                 except OSError as e:
@@ -189,32 +227,105 @@ class BiliVideoTask(Task):
                 if resolved_path in seen:
                     continue
 
+                file_type = cls._classify_output_file(resolved_path)
+                if file_type is None:
+                    continue
+
                 seen.add(resolved_path)
-                files.append(resolved_path)
+                files.append((resolved_path, file_type))
 
         return files
 
     @staticmethod
-    def _iter_video_file_candidates(path: pathlib.Path) -> list[pathlib.Path]:
+    def _iter_output_candidates(path: pathlib.Path) -> list[pathlib.Path]:
         candidates: list[pathlib.Path] = []
 
-        if path.is_file() and path.suffix.lower() in VIDEO_FILE_SUFFIXES:
+        if path.is_file():
             candidates.append(path)
         elif path.is_dir():
-            candidates.extend(
-                child
-                for child in path.rglob("*")
-                if child.is_file() and child.suffix.lower() in VIDEO_FILE_SUFFIXES
-            )
+            candidates.extend(child for child in path.rglob("*") if child.is_file())
 
         if path.parent.exists():
+            # yutto 与媒体文件同 stem 的产物，如 {stem}.nfo、{stem}-poster.jpg
+            prefixes = (f"{path.stem}.", f"{path.stem}-")
             candidates.extend(
                 child
-                for child in path.parent.glob(f"{path.name}*")
-                if child.is_file() and child.suffix.lower() in VIDEO_FILE_SUFFIXES
+                for child in path.parent.glob(f"{path.stem}*")
+                if child.is_file() and child.name.startswith(prefixes)
             )
 
         return candidates
+
+    async def _persist_video_info(
+        self, bs: BScraper, bid: str, v_info: dict
+    ) -> VideoModel | None:
+        """把视频元信息与分P信息落库；失败仅记录警告，不影响下载。"""
+        try:
+            tags = await bs.get_video_tags(bid)
+            return await get_video_dal().upsert_video_info(v_info, tags=tags)
+        except Exception as e:
+            logger.warning(f"Failed to persist video info for {bid}: {e}")
+            return None
+
+    async def _persist_download_files(
+        self,
+        video_model: VideoModel | None,
+        download_path: pathlib.Path,
+        output_files: list[tuple[pathlib.Path, str]],
+        downloaded_episodes: list[dict],
+    ) -> None:
+        """把下载产出的最终实体文件位置落库；失败仅记录警告。"""
+        if video_model is None:
+            return
+        try:
+            video_dal = get_video_dal()
+            pages = await video_dal.get_video_pages(video_model.id)
+            page_id_by_cid = {
+                page.cid: page.id for page in pages if page.cid is not None
+            }
+            page_id_by_index = {page.page_index: page.id for page in pages}
+
+            # yutto 输出的媒体文件 stem → 分P id，封面/元数据等产物与媒体文件同 stem，一并关联
+            base_path = download_path.resolve()
+            page_id_by_stem: dict[tuple[str, str], int] = {}
+            for episode in downloaded_episodes:
+                raw_path = pathlib.Path(str(episode.get("path", "")))
+                if not raw_path.parts:
+                    continue
+                episode_path = (
+                    raw_path if raw_path.is_absolute() else base_path / raw_path
+                ).resolve()
+                page_id = page_id_by_cid.get(episode.get("page_cid"))
+                if page_id is None:
+                    page_id = page_id_by_index.get(episode.get("page_index"))
+                if page_id is not None:
+                    page_id_by_stem[(str(episode_path.parent), episode_path.stem)] = (
+                        page_id
+                    )
+
+            files = []
+            for path, file_type in output_files:
+                page_id = page_id_by_stem.get((str(path.parent), path.stem))
+                if page_id is None and len(pages) == 1:
+                    page_id = pages[0].id
+                files.append(
+                    {
+                        "file_type": file_type,
+                        "file_path": str(path),
+                        "file_size": path.stat().st_size if path.exists() else None,
+                        "page_id": page_id,
+                    }
+                )
+
+            await video_dal.replace_task_files(
+                task_id=self._task_context.task_id,
+                video_id=video_model.id,
+                files=files,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to record download files for {self._task_context.bid}: {e}"
+            )
 
     def _with_task_id(self, event: DownloadProgressEvent) -> DownloadProgressEvent:
         return DownloadProgressEvent(

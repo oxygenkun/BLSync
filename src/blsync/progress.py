@@ -29,6 +29,8 @@ class DownloadProgressEvent:
     speed_bytes_per_second: float | None = None
     message: str | None = None
     downloaded_files: list[str] | None = None
+    # 下载产物的分P元信息，每项含 path / page_index / page_cid / page_name
+    downloaded_episodes: list[dict[str, object]] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

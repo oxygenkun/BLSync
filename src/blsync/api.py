@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from blsync import get_global_configs
 from blsync.consumer.bilibili import VIDEO_FILE_SUFFIXES, BiliVideoTaskContext
-from blsync.database import get_task_dal
+from blsync.database import get_task_dal, get_video_dal
 from blsync.model.task import TaskModel, TaskStatus
 from blsync.progress import get_progress_broker
 from blsync.scraper import BScraper
@@ -66,25 +66,18 @@ VIDEO_MEDIA_TYPES = {
 }
 
 
-def _task_downloaded_video_files(task: TaskModel) -> list[Path]:
-    downloaded_files = task.task_context_dict.get("downloaded_files", [])
-    if not isinstance(downloaded_files, list):
-        return []
-
-    files: list[Path] = []
-    for path_value in downloaded_files:
-        if not isinstance(path_value, str):
-            continue
-
-        path = Path(path_value)
-        if path.suffix.lower() not in VIDEO_FILE_SUFFIXES:
-            continue
-        if not path.exists() or not path.is_file():
-            continue
-
-        files.append(path)
-
-    return files
+async def _task_downloaded_video_files(task: TaskModel) -> list[Path]:
+    """Return recorded video files, preferring the download_files table."""
+    records = await get_video_dal().get_files_by_task(task.id, file_type="video")
+    files = [
+        path
+        for record in records
+        if (path := Path(record.file_path)).exists() and path.is_file()
+    ]
+    if files:
+        return files
+    # 兼容历史任务：回退到 task_data JSON 中的 downloaded_files
+    return _downloaded_video_files_from_task_data(task.task_data)
 
 
 def _downloaded_video_files_from_task_data(task_data: str) -> list[Path]:
@@ -124,6 +117,28 @@ def _task_file_summaries(task_id: int, files: list[Path]) -> list[dict[str, obje
     ]
 
 
+def _task_video_summary(video) -> dict[str, object]:
+    """Build the basic video info attached to each task list item."""
+    return {
+        "bvid": video.bvid,
+        "title": video.title,
+        "pic": video.pic,
+        "owner_name": video.owner_name,
+        "owner_mid": video.owner_mid,
+        "duration": video.duration,
+        "pubdate": video.pubdate,
+    }
+
+
+def _task_bvid(task_key: str) -> str | None:
+    try:
+        key = json.loads(task_key)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    bvid = key.get("bvid") if isinstance(key, dict) else None
+    return bvid if isinstance(bvid, str) else None
+
+
 async def _get_completed_task_for_file(task_id: int) -> TaskModel:
     task_dal = get_task_dal()
     task = await task_dal.get_task_by_id(task_id)
@@ -138,7 +153,7 @@ async def _get_completed_task_for_file(task_id: int) -> TaskModel:
 async def get_task_files(task_id: int):
     """Return video files recorded for a completed task."""
     task = await _get_completed_task_for_file(task_id)
-    files = _task_downloaded_video_files(task)
+    files = await _task_downloaded_video_files(task)
     if not files:
         raise HTTPException(status_code=404, detail="No downloaded video files found")
 
@@ -156,7 +171,7 @@ async def get_task_files(task_id: int):
 async def download_task_file(task_id: int, file_index: int) -> FileResponse:
     """Download one recorded video file by task id and file index."""
     task = await _get_completed_task_for_file(task_id)
-    files = _task_downloaded_video_files(task)
+    files = await _task_downloaded_video_files(task)
     if file_index < 0 or file_index >= len(files):
         raise HTTPException(status_code=404, detail="Downloaded file not found")
 
@@ -361,11 +376,36 @@ async def get_tasks(
     result = await task_dal.get_tasks_paginated(
         page=page, page_size=page_size, status=status
     )
-    for item in result["items"]:
+
+    items = result["items"]
+    completed_ids = [
+        item["id"] for item in items if item["status"] == TaskStatus.COMPLETED.value
+    ]
+    files_by_task = await get_video_dal().get_files_by_tasks(
+        completed_ids, file_type="video"
+    )
+    # 批量附加视频元信息（标题/UP主等），供前端展示任务基本信息
+    bvids = [_task_bvid(item["task_key"]) for item in items]
+    videos_by_bvid = await get_video_dal().get_videos_by_bvids(
+        [bvid for bvid in bvids if bvid]
+    )
+
+    for item, bvid in zip(items, bvids):
+        item["video"] = None
+        if bvid and (video := videos_by_bvid.get(bvid)) is not None:
+            item["video"] = _task_video_summary(video)
+
         item["files"] = []
         if item["status"] != TaskStatus.COMPLETED.value:
             continue
-        files = _downloaded_video_files_from_task_data(item["task_data"])
+        files = [
+            path
+            for record in files_by_task.get(item["id"], [])
+            if (path := Path(record.file_path)).exists() and path.is_file()
+        ]
+        if not files:
+            # 兼容历史任务：回退到 task_data JSON 中的 downloaded_files
+            files = _downloaded_video_files_from_task_data(item["task_data"])
         item["files"] = _task_file_summaries(item["id"], files)
 
     return result

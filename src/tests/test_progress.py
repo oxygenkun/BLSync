@@ -10,7 +10,7 @@ from blsync.consumer.yutto_wrapper import (
     _capture_yutto_show_progress,
     _record_yutto_process_download,
     _resolve_yutto_output_path,
-    _yutto_output_paths,
+    _yutto_output_records,
     iter_download_video_progress,
 )
 from blsync.progress import DownloadProgressEvent, ProgressEventType, TaskProgressBroker
@@ -53,7 +53,14 @@ async def test_iter_download_video_progress_emits_completed_event(tmp_path):
                 speed_bytes_per_second=10.0,
             )
         )
-        return [video]
+        return [
+            {
+                "path": video,
+                "page_index": 1,
+                "page_cid": 100,
+                "page_name": "P1",
+            }
+        ]
 
     with patch(
         "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
@@ -88,7 +95,14 @@ async def test_iter_download_video_progress_emits_retrying_event(tmp_path):
             raise YuttoRecoverableDownloadError([])
         video = tmp_path / "video.mp4"
         video.write_bytes(b"video")
-        return [video]
+        return [
+            {
+                "path": video,
+                "page_index": 1,
+                "page_cid": 100,
+                "page_name": "P1",
+            }
+        ]
 
     with patch(
         "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
@@ -117,7 +131,14 @@ async def test_iter_download_video_progress_emits_downloaded_files(tmp_path):
     video.write_bytes(b"video")
 
     async def fake_run(_args, _verbose, _callback, _bvid):
-        return [video]
+        return [
+            {
+                "path": video,
+                "page_index": 1,
+                "page_cid": 100,
+                "page_name": "P1",
+            }
+        ]
 
     with patch(
         "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
@@ -133,6 +154,14 @@ async def test_iter_download_video_progress_emits_downloaded_files(tmp_path):
 
     assert events[-1].event == ProgressEventType.COMPLETED
     assert events[-1].downloaded_files == [str(video)]
+    assert events[-1].downloaded_episodes == [
+        {
+            "path": str(video),
+            "page_index": 1,
+            "page_cid": 100,
+            "page_name": "P1",
+        }
+    ]
 
 
 def test_task_context_runtime_task_id_overrides_persisted_placeholder():
@@ -151,9 +180,9 @@ def test_bili_video_task_expands_yutto_path_prefix_to_video_file(tmp_path):
     video = tmp_path / "episode.mp4"
     video.write_bytes(b"video")
 
-    files = BiliVideoTask._filter_video_files(tmp_path, [tmp_path / "episode"])
+    files = BiliVideoTask._collect_output_files(tmp_path, [tmp_path / "episode"])
 
-    assert files == [video.resolve()]
+    assert files == [(video.resolve(), "video")]
 
 
 def test_yutto_output_path_uses_yutto_resolved_filename(tmp_path):
@@ -196,8 +225,8 @@ async def test_yutto_output_path_resolution_failure_does_not_fail_download(tmp_p
     async def fake_process_download(_ctx, _client, _episode_data, _options):
         return None
 
-    output_paths: list[object] = []
-    output_paths_token = _yutto_output_paths.set(output_paths)
+    output_records: list[object] = []
+    output_records_token = _yutto_output_records.set(output_records)
     try:
         with (
             patch(
@@ -216,9 +245,11 @@ async def test_yutto_output_path_resolution_failure_does_not_fail_download(tmp_p
                 {},
             )
     finally:
-        _yutto_output_paths.reset(output_paths_token)
+        _yutto_output_records.reset(output_records_token)
 
-    assert output_paths == [Path("episode")]
+    assert output_records == [
+        {"path": Path("episode"), "page_index": None, "page_cid": None, "page_name": None}
+    ]
 
 
 @pytest.mark.asyncio
@@ -226,8 +257,8 @@ async def test_yutto_existing_output_file_skips_original_download(tmp_path):
     video = tmp_path / "episode.mp4"
     video.write_bytes(b"video")
 
-    output_paths: list[object] = []
-    output_paths_token = _yutto_output_paths.set(output_paths)
+    output_records: list[object] = []
+    output_records_token = _yutto_output_records.set(output_records)
     try:
         with (
             patch(
@@ -245,10 +276,12 @@ async def test_yutto_existing_output_file_skips_original_download(tmp_path):
                 {"overwrite": False},
             )
     finally:
-        _yutto_output_paths.reset(output_paths_token)
+        _yutto_output_records.reset(output_records_token)
 
     assert result.name == "SKIP"
-    assert output_paths == [video]
+    assert output_records == [
+        {"path": video, "page_index": None, "page_cid": None, "page_name": None}
+    ]
     original_process_download.assert_not_called()
 
 

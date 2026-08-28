@@ -17,12 +17,15 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from typing import Any
 
 import h2.exceptions
 import httpx
 import yutto.download_manager as yutto_download_manager
 import yutto.downloader.downloader as yutto_downloader
 import yutto.downloader.progressbar as yutto_progressbar
+import yutto.extractor.ugc_video as yutto_ugc_video_extractor
+import yutto.extractor.ugc_video_batch as yutto_ugc_video_batch_extractor
 from loguru import logger
 from yutto.__main__ import flatten_args, run_download
 from yutto.cli.cli import cli, handle_default_subcommand
@@ -36,8 +39,9 @@ from blsync.progress import DownloadProgressEvent, ProgressEventType
 _yutto_download_paths: contextvars.ContextVar[list[pathlib.Path] | None] = (
     contextvars.ContextVar("_yutto_download_paths", default=None)
 )
-_yutto_output_paths: contextvars.ContextVar[list[pathlib.Path] | None] = (
-    contextvars.ContextVar("_yutto_output_paths", default=None)
+# 下载产物记录：{"path": Path, "page_index": int|None, "page_cid": int|None, "page_name": str|None}
+_yutto_output_records: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+    contextvars.ContextVar("_yutto_output_records", default=None)
 )
 _suppress_yutto_info: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_suppress_yutto_info", default=False
@@ -76,6 +80,7 @@ _original_yutto_logger_custom = YuttoLogger.custom
 _original_yutto_logger_new_line = YuttoLogger.new_line
 _original_yutto_show_progress = yutto_progressbar.show_progress
 _original_yutto_downloader_show_progress = yutto_downloader.show_progress
+_original_extract_ugc_video_data = yutto_ugc_video_extractor.extract_ugc_video_data
 
 _YUTTO_FILENAME_MAX_BYTES = 200
 _YUTTO_FILENAME_TAIL_BYTES = 48
@@ -243,7 +248,7 @@ async def iter_download_video_progress(
         try:
             while True:
                 try:
-                    downloaded_paths = await _run_yutto_download_in_thread(
+                    downloaded_records = await _run_yutto_download_in_thread(
                         yutto_args,
                         options.verbose,
                         emit,
@@ -322,7 +327,16 @@ async def iter_download_video_progress(
                     bvid=bvid,
                     status="completed",
                     overall_percent=100.0,
-                    downloaded_files=[str(path) for path in downloaded_paths],
+                    downloaded_files=[str(record["path"]) for record in downloaded_records],
+                    downloaded_episodes=[
+                        {
+                            "path": str(record["path"]),
+                            "page_index": record.get("page_index"),
+                            "page_cid": record.get("page_cid"),
+                            "page_name": record.get("page_name"),
+                        }
+                        for record in downloaded_records
+                    ],
                 )
             )
         finally:
@@ -347,6 +361,13 @@ async def iter_download_video_progress(
 
 def _install_yutto_patches() -> None:
     yutto_download_manager.process_download = _record_yutto_process_download
+    # 单 P 与多 P 提取器均在模块命名空间绑定了 extract_ugc_video_data，需分别替换
+    yutto_ugc_video_extractor.extract_ugc_video_data = (
+        _extract_ugc_video_data_with_page_info
+    )
+    yutto_ugc_video_batch_extractor.extract_ugc_video_data = (
+        _extract_ugc_video_data_with_page_info
+    )
     Fetcher.download_file_with_offset = staticmethod(
         _bounded_yutto_download_file_with_offset
     )
@@ -355,6 +376,35 @@ def _install_yutto_patches() -> None:
     YuttoLogger.new_line = classmethod(_filtered_yutto_logger_new_line)
     yutto_progressbar.show_progress = _capture_yutto_show_progress
     yutto_downloader.show_progress = _capture_yutto_show_progress
+
+
+async def _extract_ugc_video_data_with_page_info(
+    ctx,
+    client,
+    avid,
+    ugc_video_info,
+    options,
+    subpath_variables,
+    auto_subpath_template="{title}",
+):
+    """包装 yutto 的 UGC 剧集数据提取，向 EpisodeData 注入分P元信息。"""
+    episode_data = await _original_extract_ugc_video_data(
+        ctx,
+        client,
+        avid,
+        ugc_video_info,
+        options,
+        subpath_variables,
+        auto_subpath_template,
+    )
+    if episode_data is not None:
+        episode_data["_blsync_page_index"] = ugc_video_info.get("id")
+        episode_data["_blsync_page_name"] = ugc_video_info.get("name")
+        try:
+            episode_data["_blsync_page_cid"] = int(ugc_video_info["cid"])
+        except (KeyError, TypeError, ValueError):
+            episode_data["_blsync_page_cid"] = None
+    return episode_data
 
 
 async def _record_yutto_process_download(ctx, client, episode_data, options):
@@ -372,16 +422,23 @@ async def _record_yutto_process_download(ctx, client, episode_data, options):
     if paths is not None:
         paths.append(pathlib.Path(episode_data["path"]))
     output_path: pathlib.Path | None = None
-    output_paths = _yutto_output_paths.get()
-    if output_paths is not None:
+    records = _yutto_output_records.get()
+    if records is not None:
         try:
             output_path = _resolve_yutto_output_path(episode_data, options)
-            output_paths.append(output_path)
         except Exception as e:
             logger.warning(
                 f"Failed to resolve yutto output path for {episode_data['path']}: {e}"
             )
-            output_paths.append(pathlib.Path(episode_data["path"]))
+            output_path = pathlib.Path(episode_data["path"])
+        records.append(
+            {
+                "path": output_path,
+                "page_index": episode_data.get("_blsync_page_index"),
+                "page_cid": episode_data.get("_blsync_page_cid"),
+                "page_name": episode_data.get("_blsync_page_name"),
+            }
+        )
     _yutto_episode_name.set(pathlib.Path(episode_data["path"]).name)
     if _yutto_episode_index.get() is None:
         _yutto_episode_index.set(1)
@@ -541,7 +598,7 @@ async def _run_yutto_download_in_thread(
     verbose: bool,
     progress_callback: Callable[[DownloadProgressEvent], None] | None = None,
     bvid: str | None = None,
-) -> list[pathlib.Path]:
+) -> list[dict[str, Any]]:
     cancel_event = threading.Event()
     worker = asyncio.create_task(
         asyncio.to_thread(
@@ -598,21 +655,24 @@ def _run_yutto_download(
     cancel_event: threading.Event | None = None,
     retry_limit: int = 10,
     stall_timeout: float = 120.0,
-) -> list[pathlib.Path]:
+) -> list[dict[str, Any]]:
     """
     Run yutto directly through its Python entry points.
 
     yutto's initialization path calls asyncio.run(), so this helper is executed
     in a worker thread by download_video().
+
+    Returns:
+        List of output records: each dict has path, page_index, page_cid, page_name.
     """
     parser = cli()
     args = parser.parse_args(handle_default_subcommand(yutto_args))
     ctx = FetcherContext()
     initial_validation(ctx, args)
     paths: list[pathlib.Path] = []
-    output_paths: list[pathlib.Path] = []
+    records: list[dict[str, Any]] = []
     paths_token = _yutto_download_paths.set(paths)
-    output_paths_token = _yutto_output_paths.set(output_paths)
+    records_token = _yutto_output_records.set(records)
     suppress_token = _suppress_yutto_info.set(not verbose)
     callback_token = _yutto_progress_callback.set(progress_callback)
     bvid_token = _yutto_bvid.set(bvid)
@@ -625,7 +685,7 @@ def _run_yutto_download(
     stall_timeout_token = _yutto_stall_timeout.set(max(stall_timeout, 1.0))
     try:
         run_download(ctx, flatten_args(args, parser))
-        return output_paths
+        return records
     except Exception as e:
         if _is_yutto_invalid_resume_error(e):
             raise YuttoRecoverableDownloadError(paths) from e
@@ -641,7 +701,7 @@ def _run_yutto_download(
         _yutto_bvid.reset(bvid_token)
         _yutto_progress_callback.reset(callback_token)
         _suppress_yutto_info.reset(suppress_token)
-        _yutto_output_paths.reset(output_paths_token)
+        _yutto_output_records.reset(records_token)
         _yutto_download_paths.reset(paths_token)
 
 

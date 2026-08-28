@@ -80,3 +80,17 @@ class BScraper:
             logger.warning(bvid + "视频失效")
             return None
         return v_raw
+
+    async def get_video_tags(self, bvid) -> list[str]:
+        """
+        获取视频标签名列表。失败时返回空列表，不影响下载流程。
+
+        :param bvid: 视频bvid
+        """
+        v = video.Video(bvid=bvid, credential=self.credential)
+        try:
+            tags = await v.get_tags()
+        except Exception as e:
+            logger.warning(f"Failed to get tags for {bvid}: {e}")
+            return []
+        return [tag["tag_name"] for tag in tags if tag.get("tag_name")]

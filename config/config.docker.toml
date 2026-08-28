@@ -1,0 +1,26 @@
+interval = 60
+request_timeout = 1000
+task_timeout=3000
+max_concurrent_tasks = 1
+data_path = "config/"
+
+
+
+[credential]
+sessdata = "77f2da29%2C1775973943%2C65b354a2"
+bili_jct = "fdc83c91c94cd000e1834abbbaca729d"
+
+
+[favorite_list.-1]
+# 键值对存储，key是收藏夹id，value是下载存储路径
+# fid为-1表示非收藏夹 
+# fid = "<download_path>"
+fid = -1
+path = "/app/sync/{YYYY}{MM}/"
+name = "{auto}({bvid})"
+
+[favorite_list.task2]
+fid = 3579262003                                          # 3579262003
+path = "/app/sync/{YYYY}{MM}/"
+name = "{auto}({bvid})"
+postprocess = [{ action = "move", fid = 3923730603}]
