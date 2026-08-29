@@ -1,13 +1,13 @@
 import pytest
 
-from blsync.configuration.loader import load_config_from_file, parse_args
+from blsync.configuration.loader import build_config, parse_args
 from blsync.configuration.models import Config
 from blsync.scraper import BScraper
 
 
 @pytest.fixture
 def my_config():
-    return load_config_from_file(parse_args([]).config)
+    return build_config(parse_args([]).config)
 
 
 @pytest.mark.asyncio

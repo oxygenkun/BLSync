@@ -4,9 +4,10 @@ import enum
 import json
 import os
 import zoneinfo
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import (
     DateTime,
     Index,
@@ -32,9 +33,9 @@ from blsync.progress import (
 TZ_ENV = os.environ.get("TZ", "UTC")
 try:
     TZ = zoneinfo.ZoneInfo(TZ_ENV)
-except Exception:
+except (KeyError, ValueError):
     # Fallback to UTC if timezone is not available
-    TZ = timezone.utc
+    TZ = UTC
 
 
 def format_datetime(dt: datetime | None) -> str | None:
@@ -54,7 +55,7 @@ def format_datetime(dt: datetime | None) -> str | None:
 
     # If datetime is timezone-naive, assume it's UTC
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     # Convert to target timezone
     dt_local = dt.astimezone(TZ)
@@ -83,8 +84,6 @@ class TaskStatus(str, enum.Enum):
 class Base(DeclarativeBase):
     """Base class for all database models."""
 
-    pass
-
 
 class TaskModel(Base):
     """
@@ -109,9 +108,13 @@ class TaskModel(Base):
     task_key: Mapped[str] = mapped_column(String(500))
     task_data: Mapped[str] = mapped_column(Text())
     status: Mapped[str] = mapped_column(String(20), default=TaskStatus.READY.value)
-    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(), default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
@@ -246,8 +249,8 @@ class TaskDAL:
                     cursor.execute("PRAGMA foreign_keys=ON;")
                     # Set busy timeout to 20 seconds
                     cursor.execute("PRAGMA busy_timeout=20000;")
-                except Exception:
-                    pass  # Ignore errors for non-SQLite databases
+                except Exception as exc:
+                    logger.debug(f"SQLite PRAGMA setup skipped: {exc}")
 
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
@@ -315,7 +318,7 @@ class TaskDAL:
             # Build update values
             values: dict[str, Any] = {"status": status.value}
             if status == TaskStatus.COMPLETED:
-                values["completed_at"] = datetime.now(timezone.utc)
+                values["completed_at"] = datetime.now(UTC)
                 values["error_message"] = None
             elif status == TaskStatus.FAILED:
                 values["error_message"] = error_message
@@ -426,7 +429,7 @@ class TaskDAL:
                     .values(
                         status=TaskStatus.CONSUMING.value,
                         worker_id=worker_id,
-                        lease_expires_at=datetime.utcnow()
+                        lease_expires_at=datetime.now(UTC)
                         + timedelta(seconds=lease_seconds),
                         error_message=None,
                     )
@@ -450,7 +453,7 @@ class TaskDAL:
                 update(TaskModel)
                 .where(TaskModel.id == task_id, TaskModel.worker_id == worker_id)
                 .values(
-                    lease_expires_at=datetime.utcnow()
+                    lease_expires_at=datetime.now(UTC)
                     + timedelta(seconds=lease_seconds)
                 )
                 .returning(TaskModel.control_action)
@@ -471,7 +474,7 @@ class TaskDAL:
         """Update a task only while the caller still owns its lease."""
         values: dict[str, Any] = {"status": status.value}
         if status == TaskStatus.COMPLETED:
-            values.update(completed_at=datetime.utcnow(), error_message=None)
+            values.update(completed_at=datetime.now(UTC), error_message=None)
         elif status == TaskStatus.FAILED:
             values["error_message"] = error_message
         if release:
@@ -561,7 +564,7 @@ class TaskDAL:
     async def recover_expired_tasks(self) -> int:
         """Recover tasks whose owning worker stopped renewing its lease."""
         async with self.async_session() as session:
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             pausing = await session.execute(
                 update(TaskModel)
                 .where(

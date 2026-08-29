@@ -4,7 +4,7 @@ Bilibili消费者模块 - 处理Bilibili相关的下载任务
 
 import os
 import pathlib
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import lru_cache
 
 import aiohttp
@@ -110,7 +110,7 @@ class BiliVideoTask(Task):
     @staticmethod
     def _format_download_path(path_template: str) -> pathlib.Path:
         """格式化下载路径，支持Python format语法"""
-        now = datetime.now()
+        now = datetime.now(UTC)
         format_vars = {
             "YYYY": now.strftime("%Y"),  # 四位数年份
             "YY": now.strftime("%y"),  # 两位数年份
@@ -181,7 +181,9 @@ class BiliVideoTask(Task):
             url_refresh_retries=self._config.download_url_refresh_retries,
         ):
             if event.downloaded_files is not None:
-                downloaded_paths = [pathlib.Path(path) for path in event.downloaded_files]
+                downloaded_paths = [
+                    pathlib.Path(path) for path in event.downloaded_files
+                ]
             if event.downloaded_episodes is not None:
                 downloaded_episodes = event.downloaded_episodes
             event = self._with_task_id(event)
@@ -217,8 +219,8 @@ class BiliVideoTask(Task):
             # 执行下载后处理
             try:
                 await self.execute_postprocess()
-            except Exception:
-                raise Exception(f"Postprocess for {bid} failed")
+            except Exception as exc:
+                raise RuntimeError(f"Postprocess for {bid} failed") from exc
         else:
             error_detail = download_error or "download ended without a completion event"
             logger.warning(
@@ -248,7 +250,9 @@ class BiliVideoTask(Task):
                 try:
                     resolved_path = candidate.resolve()
                 except OSError as e:
-                    logger.warning(f"Failed to resolve downloaded path {candidate}: {e}")
+                    logger.warning(
+                        f"Failed to resolve downloaded path {candidate}: {e}"
+                    )
                     continue
 
                 if resolved_path in seen:
@@ -539,8 +543,7 @@ async def download_file(url, download_path: pathlib.Path):
             download_path = download_path.with_name(f"{stem}_{counter}{suffix}")
             counter += 1
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            download_path.write_bytes(await resp.read())
+    async with aiohttp.ClientSession() as session, session.get(url) as resp:
+        download_path.write_bytes(await resp.read())
     logger.info(f"Downloaded {url} to {download_path}")
     return True

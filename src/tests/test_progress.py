@@ -248,7 +248,12 @@ async def test_yutto_output_path_resolution_failure_does_not_fail_download(tmp_p
         _yutto_output_records.reset(output_records_token)
 
     assert output_records == [
-        {"path": Path("episode"), "page_index": None, "page_cid": None, "page_name": None}
+        {
+            "path": Path("episode"),
+            "page_index": None,
+            "page_cid": None,
+            "page_name": None,
+        }
     ]
 
 

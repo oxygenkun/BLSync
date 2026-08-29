@@ -124,9 +124,7 @@ class VideoPageModel(Base):
     __tablename__ = "video_pages"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    video_id: Mapped[int] = mapped_column(
-        ForeignKey("videos.id", ondelete="CASCADE")
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
     cid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_index: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(500))
@@ -166,9 +164,7 @@ class DownloadFileModel(Base):
     task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
     )
-    video_id: Mapped[int] = mapped_column(
-        ForeignKey("videos.id", ondelete="CASCADE")
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"))
     page_id: Mapped[int | None] = mapped_column(
         ForeignKey("video_pages.id", ondelete="CASCADE"), nullable=True
     )
@@ -317,9 +313,7 @@ class VideoDAL:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def get_videos_by_bvids(
-        self, bvids: list[str]
-    ) -> dict[str, VideoModel]:
+    async def get_videos_by_bvids(self, bvids: list[str]) -> dict[str, VideoModel]:
         """
         Get multiple videos by their BVIDs in one query.
 

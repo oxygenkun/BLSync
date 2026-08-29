@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from blsync.configuration.store import ConfigurationSnapshot
 from blsync.configuration.models import Config, ConfigCredential, FavoriteListConfig
-from blsync.main import app
+from blsync.configuration.store import ConfigurationSnapshot
 from blsync.db.task import BiliVideoTaskDAL, TaskStatus
+from blsync.main import app
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
@@ -33,10 +33,12 @@ def test_dal():
 def test_client(test_dal):
     """Create test client with mocked database."""
     # Patch get_task_dal to return test database
-    with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-        with patch("blsync.main.get_task_dal", return_value=test_dal):
-            with patch("blsync.db._task_dal", test_dal):
-                yield TestClient(app)
+    with (
+        patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        patch("blsync.main.get_task_dal", return_value=test_dal),
+        patch("blsync.db._task_dal", test_dal),
+    ):
+        yield TestClient(app)
 
 
 @pytest.fixture
@@ -44,10 +46,12 @@ def mock_scraper():
     """Create mock BScraper for video info tests."""
     scraper_instance = MagicMock()
     scraper_instance.get_video_info = AsyncMock()
-    with patch("blsync.routes.video.get_config") as mock_config:
+    with (
+        patch("blsync.routes.video.get_config") as mock_config,
+        patch("blsync.routes.video.BScraper", return_value=scraper_instance),
+    ):
         mock_config.return_value = MagicMock()  # Mock config
-        with patch("blsync.routes.video.BScraper", return_value=scraper_instance):
-            yield scraper_instance
+        yield scraper_instance
 
 
 class TestReadRoot:
@@ -61,10 +65,12 @@ class TestReadRoot:
         index_file = static_dir / "index.html"
         index_file.write_text("<html><body>Test Page</body></html>")
 
-        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-            with patch("blsync.routes.frontend.STATIC_DIR", static_dir):
-                client = TestClient(app)
-                response = client.get("/")
+        with (
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+            patch("blsync.routes.frontend.STATIC_DIR", static_dir),
+        ):
+            client = TestClient(app)
+            response = client.get("/")
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
@@ -76,10 +82,12 @@ class TestReadRoot:
         empty_dir = tmp_path / "empty_static"
         empty_dir.mkdir()
 
-        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-            with patch("blsync.routes.frontend.STATIC_DIR", empty_dir):
-                client = TestClient(app)
-                response = client.get("/")
+        with (
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+            patch("blsync.routes.frontend.STATIC_DIR", empty_dir),
+        ):
+            client = TestClient(app)
+            response = client.get("/")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -329,14 +337,16 @@ class TestGetVideoInfo:
 
     def test_get_video_info_not_found(self, test_dal):
         """Test getting video info for non-existent video."""
-        with patch("blsync.routes.video.get_config") as mock_config:
+        mock_scraper = MagicMock()
+        mock_scraper.get_video_info = AsyncMock(return_value=None)
+        with (
+            patch("blsync.routes.video.get_config") as mock_config,
+            patch("blsync.routes.video.BScraper", return_value=mock_scraper),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
             mock_config.return_value = MagicMock()
-            mock_scraper = MagicMock()
-            mock_scraper.get_video_info = AsyncMock(return_value=None)
-            with patch("blsync.routes.video.BScraper", return_value=mock_scraper):
-                with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                    client = TestClient(app)
-                    response = client.get("/api/video/info?bvid=INVALID")
+            client = TestClient(app)
+            response = client.get("/api/video/info?bvid=INVALID")
 
         assert response.status_code == 404
         assert (
@@ -483,10 +493,12 @@ class TestGetTaskDetail:
 
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.get(f"/api/tasks/{task.id}")
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.get(f"/api/tasks/{task.id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -507,10 +519,12 @@ class TestGetTaskDetail:
 
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.get("/api/tasks/99999")
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.get("/api/tasks/99999")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -706,12 +720,14 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "ready"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status", json={"status": "ready"}
+            )
 
         assert response.status_code == 200
 
@@ -722,12 +738,14 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "consuming"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status", json={"status": "consuming"}
+            )
 
         assert response.status_code == 200
 
@@ -738,12 +756,14 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "completed"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status", json={"status": "completed"}
+            )
 
         assert response.status_code == 200
 
@@ -754,13 +774,15 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={"status": "failed", "error_message": "Download failed"},
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status",
+                json={"status": "failed", "error_message": "Download failed"},
+            )
 
         assert response.status_code == 200
 
@@ -771,12 +793,14 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "failed"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status", json={"status": "failed"}
+            )
 
         assert response.status_code == 400
         assert "error_message is required" in response.json()["detail"]
@@ -788,12 +812,14 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status", json={"status": "invalid_status"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status", json={"status": "invalid_status"}
+            )
 
         assert response.status_code == 400
         assert "invalid status" in response.json()["detail"].lower()
@@ -802,12 +828,14 @@ class TestUpdateTaskStatus:
         """Test updating status for non-existent task."""
         mock_get_session = MagicMock(return_value=self._create_mock_session(task=None))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    "/api/tasks/99999/status", json={"status": "completed"}
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                "/api/tasks/99999/status", json={"status": "completed"}
+            )
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -826,13 +854,15 @@ class TestUpdateTaskStatus:
 
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
-        with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
-                client = TestClient(app)
-                response = client.put(
-                    f"/api/tasks/{task.id}/status",
-                    json={},  # Missing status field
-                )
+        with (
+            patch.object(test_dal, "get_session", mock_get_session),
+            patch("blsync.routes.tasks.get_task_dal", return_value=test_dal),
+        ):
+            client = TestClient(app)
+            response = client.put(
+                f"/api/tasks/{task.id}/status",
+                json={},  # Missing status field
+            )
 
         assert response.status_code == 422  # Validation error
 

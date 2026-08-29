@@ -232,9 +232,7 @@ async def iter_download_video_progress(
 
     async def run_download() -> None:
         retry_limit_token = _yutto_retry_limit.set(max(options.retry_limit, 1))
-        stall_timeout_token = _yutto_stall_timeout.set(
-            max(options.stall_timeout, 1.0)
-        )
+        stall_timeout_token = _yutto_stall_timeout.set(max(options.stall_timeout, 1.0))
         emit(
             DownloadProgressEvent(
                 event=ProgressEventType.STATUS,
@@ -327,7 +325,9 @@ async def iter_download_video_progress(
                     bvid=bvid,
                     status="completed",
                     overall_percent=100.0,
-                    downloaded_files=[str(record["path"]) for record in downloaded_records],
+                    downloaded_files=[
+                        str(record["path"]) for record in downloaded_records
+                    ],
                     downloaded_episodes=[
                         {
                             "path": str(record["path"]),
@@ -727,8 +727,7 @@ async def _bounded_yutto_download_file_with_offset(
             stalled_for = time.monotonic() - last_progress_at
             if stalled_for >= _yutto_stall_timeout.get():
                 raise YuttoDownloadStalledError(
-                    f"{file_buffer.file_path} made no progress for "
-                    f"{stalled_for:.1f}s"
+                    f"{file_buffer.file_path} made no progress for {stalled_for:.1f}s"
                 )
 
             selected_url = random.choice(url_pool)

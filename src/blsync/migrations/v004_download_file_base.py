@@ -17,6 +17,4 @@ set.
 
 VERSION = 4
 
-STATEMENTS = (
-    "ALTER TABLE download_files ADD COLUMN file_base TEXT",
-)
+STATEMENTS = ("ALTER TABLE download_files ADD COLUMN file_base TEXT",)
