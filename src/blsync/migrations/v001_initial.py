@@ -21,4 +21,3 @@ STATEMENTS = (
     "CREATE INDEX ix_tasks_status ON tasks (status)",
     "CREATE INDEX ix_tasks_created_at ON tasks (created_at)",
 )
-

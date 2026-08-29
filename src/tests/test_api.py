@@ -41,7 +41,7 @@ def mock_scraper():
     """Create mock BScraper for video info tests."""
     scraper_instance = MagicMock()
     scraper_instance.get_video_info = AsyncMock()
-    with patch("blsync.api.get_global_configs") as mock_config:
+    with patch("blsync.api.get_config") as mock_config:
         mock_config.return_value = MagicMock()  # Mock config
         with patch("blsync.api.BScraper", return_value=scraper_instance):
             yield scraper_instance
@@ -256,7 +256,7 @@ class TestGetVideoInfo:
 
     def test_get_video_info_not_found(self, test_dal):
         """Test getting video info for non-existent video."""
-        with patch("blsync.api.get_global_configs") as mock_config:
+        with patch("blsync.api.get_config") as mock_config:
             mock_config.return_value = MagicMock()
             mock_scraper = MagicMock()
             mock_scraper.get_video_info = AsyncMock(return_value=None)

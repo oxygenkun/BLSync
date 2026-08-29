@@ -14,4 +14,3 @@ MIGRATIONS = (
     v004_download_file_base,
 )
 LATEST_SCHEMA_VERSION = len(MIGRATIONS)
-

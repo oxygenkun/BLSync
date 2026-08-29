@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
-from blsync import get_global_configs
+from blsync.configuration.store import get_config
 from blsync.consumer.bilibili import VIDEO_FILE_SUFFIXES, BiliVideoTaskContext
 from blsync.database import get_task_dal, get_video_dal
 from blsync.model.task import TaskModel, TaskStatus
@@ -334,7 +334,7 @@ async def get_video_info(bvid: str = Query(..., description="视频BV号")):
     """
     根据 BV 号获取视频详细信息，包括标题、封面、作者、分P列表等。
     """
-    config = get_global_configs()
+    config = get_config()
     scraper = BScraper(config)
 
     video_info = await scraper.get_video_info(bvid)

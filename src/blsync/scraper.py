@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
 
-from blsync.configs import Config
+from blsync.configuration.models import Config
 
 
 class BScraper:

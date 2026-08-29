@@ -17,14 +17,14 @@ from bilibili_api.video import Video
 from loguru import logger
 
 # from yutto.path_templates import repair_filename
-from blsync import get_global_configs
-from blsync.configs import (
+from blsync.configuration.models import (
     Config,
     ConfigCredential,
     MovePostprocessConfig,
     RemovePostprocessConfig,
     SavePostprocessConfig,
 )
+from blsync.configuration.store import get_config
 from blsync.consumer.base import Postprocess, Task, TaskContext
 from blsync.consumer.yutto_wrapper import iter_download_video_progress
 from blsync.database import get_video_dal
@@ -98,7 +98,7 @@ class BiliVideoTask(Task):
 
     def __init__(self, task_context: BiliVideoTaskContext):
         self._task_context = task_context
-        self._config = get_global_configs()
+        self._config = get_config()
         self._fav_config = self._config.favorite_list.get(
             self._task_context.task_name, self._config.favorite_list["-1"]
         )
@@ -424,7 +424,7 @@ class BiliVideoPostprocessMove(Postprocess):
         self._post_config = post_config
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
@@ -454,7 +454,7 @@ class BiliVideoPostprocessRemove(Postprocess):
         self._task_context = task_context
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
@@ -484,7 +484,7 @@ class BiliVideoPostprocessSave(Postprocess):
         self._post_config = post_config
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
