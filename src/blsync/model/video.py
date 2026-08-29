@@ -1,6 +1,8 @@
 """Video metadata and download file models using SQLAlchemy."""
 
 import json
+import os
+import pathlib
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +20,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from blsync.model.task import Base
+
+
+def _resolve_container_path(p: str) -> pathlib.Path:
+    """把记录里的路径解析为容器内绝对路径。
+
+    - 已是绝对路径：直接 resolve；
+    - 相对路径：相对项目根（``BLSYNC_BASE_DIR`` 环境变量，否则当前工作目录）。
+    """
+    path = pathlib.Path(p)
+    if path.is_absolute():
+        return path.resolve()
+    base = os.environ.get("BLSYNC_BASE_DIR")
+    root = pathlib.Path(base).resolve() if base else pathlib.Path.cwd()
+    return (root / path).resolve()
 
 
 class VideoModel(Base):
@@ -136,7 +152,9 @@ class DownloadFileModel(Base):
         video_id: Owning video id
         page_id: Owning page id (only set for single-page videos)
         file_type: File type (video/audio/cover/metadata/subtitle/danmaku)
-        file_path: Absolute path of the final file on disk
+        file_base: container-absolute download directory (e.g. /app/sync/202608)
+        file_path: relative path below file_base (e.g. xxx.mp4); absolute for
+            legacy rows where file_base is NULL
         file_size: File size in bytes
         created_at: Row creation timestamp
         updated_at: Row update timestamp
@@ -155,6 +173,7 @@ class DownloadFileModel(Base):
         ForeignKey("video_pages.id", ondelete="CASCADE"), nullable=True
     )
     file_type: Mapped[str] = mapped_column(String(20))
+    file_base: Mapped[str | None] = mapped_column(Text(), nullable=True)
     file_path: Mapped[str] = mapped_column(Text())
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
@@ -166,6 +185,18 @@ class DownloadFileModel(Base):
         Index("ix_download_files_task_id", "task_id"),
         Index("ix_download_files_video_id", "video_id"),
     )
+
+    @property
+    def absolute_path(self) -> pathlib.Path:
+        """容器内文件完整绝对路径。
+
+        - 新记录：``file_base``（容器绝对下载目录，如 ``/app/sync/202608``）与
+          相对子路径 ``file_path``（如 ``xxx.mp4``）拼接；
+        - 旧记录（``file_base`` 为空）：``file_path`` 相对项目根解析为绝对路径。
+        """
+        if self.file_base:
+            return (pathlib.Path(self.file_base) / self.file_path).resolve()
+        return _resolve_container_path(self.file_path)
 
 
 class VideoDAL:
@@ -332,8 +363,9 @@ class VideoDAL:
         Args:
             task_id: Task that produced the files (optional)
             video_id: Owning video id
-            files: List of dicts with file_type, file_path, file_size and
-                page_id keys
+            files: List of dicts with file_type, file_base, file_path, file_size
+                and page_id keys. file_path is relative to file_base for new
+                records; file_base may be None for legacy absolute paths.
 
         Returns:
             The inserted DownloadFileModel instances
@@ -359,6 +391,7 @@ class VideoDAL:
                     video_id=video_id,
                     page_id=file.get("page_id"),
                     file_type=file["file_type"],
+                    file_base=file.get("file_base"),
                     file_path=file["file_path"],
                     file_size=file.get("file_size"),
                 )

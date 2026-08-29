@@ -328,14 +328,22 @@ class BiliVideoTask(Task):
                     )
 
             files = []
+            base = download_path.resolve()
             for path, file_type in output_files:
                 page_id = page_id_by_stem.get((str(path.parent), path.stem))
                 if page_id is None and len(pages) == 1:
                     page_id = pages[0].id
+                try:
+                    rel_path = path.relative_to(base)
+                    file_base, file_path = str(base), str(rel_path)
+                except ValueError:
+                    # 产物不在下载目录内，回退为绝对路径存 file_path（file_base 为空）
+                    file_base, file_path = None, str(path)
                 files.append(
                     {
                         "file_type": file_type,
-                        "file_path": str(path),
+                        "file_base": file_base,
+                        "file_path": file_path,
                         "file_size": path.stat().st_size if path.exists() else None,
                         "page_id": page_id,
                     }

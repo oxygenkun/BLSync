@@ -72,7 +72,7 @@ async def _task_downloaded_video_files(task: TaskModel) -> list[Path]:
     files = [
         path
         for record in records
-        if (path := Path(record.file_path)).exists() and path.is_file()
+        if (path := record.absolute_path).exists() and path.is_file()
     ]
     if files:
         return files
@@ -402,7 +402,7 @@ async def get_tasks(
         files = [
             path
             for record in files_by_task.get(item["id"], [])
-            if (path := Path(record.file_path)).exists() and path.is_file()
+            if (path := record.absolute_path).exists() and path.is_file()
         ]
         if not files:
             # 兼容历史任务：回退到 task_data JSON 中的 downloaded_files
