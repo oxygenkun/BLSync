@@ -126,6 +126,7 @@ def _task_video_summary(video) -> dict[str, object]:
         "owner_name": video.owner_name,
         "owner_mid": video.owner_mid,
         "duration": video.duration,
+        "videos_count": video.videos_count,
         "pubdate": video.pubdate,
     }
 
