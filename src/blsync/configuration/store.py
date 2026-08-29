@@ -4,13 +4,18 @@ The store is the single owner of the active configuration:
 
     config.toml <--> ConfigStore <--> application code
 
-- Program -> file: :meth:`ConfigStore.update` validates, writes atomically,
-  then publishes.
+- Program -> file: :meth:`ConfigStore.update` applies changes on the ``Config``
+  model, validates it, serializes it into its TOML projection, writes it
+  atomically, then publishes.
 - File -> program: :meth:`ConfigStore.get` polls the file signature and
   reloads valid external changes; reload never writes the file, which keeps
   the two-way binding loop-free.
 - Both directions notify field-level change observers registered through
   :meth:`ConfigStore.on_change`.
+
+The ``Config`` pydantic model is the single source of truth: the TOML file
+is only a serialized projection of the active ``Config``, and every internal
+read goes through the model.
 """
 
 import asyncio
@@ -21,15 +26,13 @@ import sys
 import tempfile
 import threading
 from collections.abc import Callable, Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-import toml
 from loguru import logger
 
-from .loader import build_config, parse_args
-from .models import EDITABLE_FIELDS, Config
+from .loader import build_config, dump_config, parse_args
+from .models import EDITABLE_FIELDS, Config, apply_config_changes
 
 type FileSignature = tuple[int, int]
 type ChangeCallback = Callable[[Any, Any], None]
@@ -172,31 +175,20 @@ class ConfigStore:
         current: Config,
         changes: Mapping[str, Any],
     ) -> Config:
-        raw: dict[str, Any] = toml.load(current.config_file)
-        self._apply_changes(raw, changes)
+        """Validate an update on the Config model and persist it atomically.
+
+        The new ``Config`` is computed from ``current`` plus ``changes`` and
+        fully re-validated; only then is its TOML projection written. The
+        returned model is exactly what lands on disk, keeping the store's
+        in-memory state aligned with the file.
+        """
         try:
-            candidate = build_config(
-                current.config_file,
-                strict_favorites=True,
-            )
-            rendered = toml.dumps(raw)
+            updated = apply_config_changes(current, changes)
+            rendered = dump_config(updated)
         except (KeyError, TypeError, ValueError) as exc:
             raise ConfigUpdateInvalid(str(exc)) from exc
         self._atomic_replace(current.config_file, rendered)
-        return candidate
-
-    @staticmethod
-    def _apply_changes(raw: dict[str, Any], changes: Mapping[str, Any]) -> None:
-        for key, value in deepcopy(dict(changes)).items():
-            if key == "credential" and isinstance(value, Mapping):
-                credential = raw.setdefault("credential", {})
-                for secret_name, secret_value in value.items():
-                    # null retains an existing secret; an empty string clears it.
-                    if secret_value is not None:
-                        credential[secret_name] = secret_value
-            else:
-                # Collections are whole-value replacements so deletions persist.
-                raw[key] = value
+        return updated
 
     def _reload_external_change(self, signature: FileSignature) -> Config | None:
         """Apply a valid external file change and return the previous config.

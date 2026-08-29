@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "toml>=0.10.2",
+    "tomli-w>=1.2.0",
     "bilibili-api-python>=17.4.1",
     "fastapi>=0.136.1",
     "uvicorn>=0.47.0",

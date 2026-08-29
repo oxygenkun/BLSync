@@ -219,6 +219,12 @@ def build_config_document(config: Config, revision: str) -> ConfigDocument:
         if key in EDITABLE_FIELDS
     }
     values["credential"] = {key: None for key in ConfigCredential.model_fields}
+    # Config serializers project the TOML shape (int fids, omitted nulls);
+    # the API document keeps the natural model shape for the frontend.
+    values["favorite_list"] = {
+        name: favorite.model_dump(mode="json")
+        for name, favorite in config.favorite_list.items()
+    }
     overridden_fields: list[str] = []
     return ConfigDocument(
         revision=revision,
