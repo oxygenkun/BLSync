@@ -1,12 +1,12 @@
-"""Test video metadata and download file models."""
+"""Test video metadata and download file ORM models."""
 
 import json
 
 import pytest
 from sqlalchemy import text
 
-from blsync.model.task import BiliVideoTaskDAL
-from blsync.model.video import VideoDAL
+from blsync.db.task import BiliVideoTaskDAL
+from blsync.db.video import VideoDAL
 
 
 def _make_video_info(

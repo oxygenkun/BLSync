@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 
 from blsync.migrations import LATEST_SCHEMA_VERSION
-from blsync.model.task import BiliVideoTaskDAL, TaskStatus
+from blsync.db.task import BiliVideoTaskDAL, TaskStatus
 from blsync.schema import SchemaMigrationError
 
 

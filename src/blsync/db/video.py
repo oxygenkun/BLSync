@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from blsync.model.task import Base
+from .task import Base
 
 
 def _resolve_container_path(p: str) -> pathlib.Path:

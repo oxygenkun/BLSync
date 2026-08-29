@@ -27,8 +27,8 @@ from blsync.configuration.models import (
 from blsync.configuration.store import get_config
 from blsync.consumer.base import Postprocess, Task, TaskContext
 from blsync.consumer.yutto_wrapper import iter_download_video_progress
-from blsync.database import get_video_dal
-from blsync.model.video import VideoModel
+from blsync.db import get_video_dal
+from blsync.db.video import VideoModel
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,

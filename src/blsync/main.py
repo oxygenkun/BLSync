@@ -8,30 +8,27 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
-from blsync.api import api_router, file_router, frontend_router
 from blsync.configuration.store import get_config
 from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
-from blsync.database import get_task_dal
-from blsync.model.task import (
-    TaskStatus,
-    make_bili_video_key,
-    parse_bili_video_key,
-)
+from blsync.db import get_task_dal
+from blsync.db.task import TaskStatus, parse_bili_video_key
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
     get_progress_broker,
 )
-from blsync.routes.config import router as config_router
-from blsync.scraper import BScraper
+from blsync.routes import api_router, file_router, frontend_router
+from blsync.services.favorite_scanner import scan_favorites_once
 
-_scan_lock = asyncio.Lock()
 WORKER_ID = os.environ.get(
     "WORKER_ID", os.environ.get("HOSTNAME", socket.gethostname())
 )
 CONTROL_POLL_SECONDS = 1.0
 LEASE_SECONDS = 30.0
+# 前端 SSE 长连接在 Ctrl+C 时不会主动断开；uvicorn 默认无限等待连接关闭，
+# 导致进程卡在 "Waiting for connections to close."，需要设置一个有限的宽限期。
+GRACEFUL_SHUTDOWN_SECONDS = 5.0
 
 
 def setup_logger():
@@ -39,10 +36,6 @@ def setup_logger():
     config = get_config()
     logger.remove()
     logger.add(sys.stderr, level=config.log_level)
-
-
-def get_scraper():
-    return BScraper(get_config())
 
 
 async def _monitor_task_control(
@@ -273,59 +266,6 @@ async def task_producer():
             await asyncio.sleep(config.interval)
 
 
-async def scan_favorites_once() -> dict[str, int]:
-    """Scan configured favorites once and enqueue missing or failed tasks."""
-    async with _scan_lock:
-        config = get_config()
-        bs = get_scraper()
-        task_dal = get_task_dal()
-        stats = {"created": 0, "reset": 0, "skipped": 0}
-
-        async for bvid, task_name in bs.get_all_bvids():
-            context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
-            status = await task_dal.get_bili_video_task_status(bvid, task_name)
-
-            if status is None:
-                await task_dal.create_bili_video_task(
-                    bvid=bvid,
-                    favid=task_name,
-                    task_context=context.model_dump(),
-                )
-                stats["created"] += 1
-                logger.info(f"[task_producer] Added new task {bvid} for {task_name}")
-            elif status == TaskStatus.FAILED:
-                if config.retry_failed_tasks:
-                    task_key = make_bili_video_key(bvid, task_name)
-                    await task_dal.update_task_status(task_key, TaskStatus.READY)
-                    stats["reset"] += 1
-                    logger.info(
-                        f"[task_producer] Reset failed task {bvid} "
-                        f"for {task_name} to READY"
-                    )
-                else:
-                    stats["skipped"] += 1
-                    logger.debug(
-                        f"[task_producer] Failed task {bvid} requires manual retry"
-                    )
-            elif status in (
-                TaskStatus.READY,
-                TaskStatus.CONSUMING,
-                TaskStatus.DOWNLOADING,
-                TaskStatus.PAUSING,
-                TaskStatus.PAUSED,
-                TaskStatus.COMPLETED,
-            ):
-                stats["skipped"] += 1
-                logger.debug(
-                    f"[task_producer] Task {bvid} (task_name: {task_name}) "
-                    f"is {status.value}, skipping"
-                )
-            else:
-                logger.warning(f"[task_producer] Unknown task status: {status}")
-
-        return stats
-
-
 async def delete_stale_tasks():
     """
     定期清理已完成但仍在数据库中的任务
@@ -397,7 +337,6 @@ app = FastAPI(lifespan=lifespan)
 
 # 注册路由 - API 路由优先，避免被前端 catch-all 路由拦截
 app.include_router(api_router, prefix="/api")  # API 路由 /api/*
-app.include_router(config_router, prefix="/api")
 app.include_router(file_router)  # 文件路由 /file/*
 app.include_router(frontend_router)  # 根路由 / (前端页面)
 
@@ -413,7 +352,7 @@ def main():
         "blsync.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
 
 

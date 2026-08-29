@@ -3,13 +3,16 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from blsync.configuration.store import ConfigurationSnapshot
+from blsync.configuration.models import Config, ConfigCredential, FavoriteListConfig
 from blsync.main import app
-from blsync.model.task import BiliVideoTaskDAL, TaskStatus
+from blsync.db.task import BiliVideoTaskDAL, TaskStatus
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
@@ -30,9 +33,9 @@ def test_dal():
 def test_client(test_dal):
     """Create test client with mocked database."""
     # Patch get_task_dal to return test database
-    with patch("blsync.api.get_task_dal", return_value=test_dal):
+    with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
         with patch("blsync.main.get_task_dal", return_value=test_dal):
-            with patch("blsync.database._task_dal", test_dal):
+            with patch("blsync.db._task_dal", test_dal):
                 yield TestClient(app)
 
 
@@ -41,9 +44,9 @@ def mock_scraper():
     """Create mock BScraper for video info tests."""
     scraper_instance = MagicMock()
     scraper_instance.get_video_info = AsyncMock()
-    with patch("blsync.api.get_config") as mock_config:
+    with patch("blsync.routes.video.get_config") as mock_config:
         mock_config.return_value = MagicMock()  # Mock config
-        with patch("blsync.api.BScraper", return_value=scraper_instance):
+        with patch("blsync.routes.video.BScraper", return_value=scraper_instance):
             yield scraper_instance
 
 
@@ -58,8 +61,8 @@ class TestReadRoot:
         index_file = static_dir / "index.html"
         index_file.write_text("<html><body>Test Page</body></html>")
 
-        with patch("blsync.api.get_task_dal", return_value=test_dal):
-            with patch("blsync.api.STATIC_DIR", static_dir):
+        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.frontend.STATIC_DIR", static_dir):
                 client = TestClient(app)
                 response = client.get("/")
 
@@ -73,8 +76,8 @@ class TestReadRoot:
         empty_dir = tmp_path / "empty_static"
         empty_dir.mkdir()
 
-        with patch("blsync.api.get_task_dal", return_value=test_dal):
-            with patch("blsync.api.STATIC_DIR", empty_dir):
+        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.frontend.STATIC_DIR", empty_dir):
                 client = TestClient(app)
                 response = client.get("/")
 
@@ -222,6 +225,76 @@ class TestGetTaskStatus:
         assert data["failed"] == 1
 
 
+class TestScanTasks:
+    """Tests for POST /api/tasks/scan endpoint."""
+
+    def test_scan_tasks_uses_scanner_service(self, test_client):
+        stats = {"created": 2, "reset": 1, "skipped": 3}
+        with patch(
+            "blsync.routes.tasks.scan_favorites_once",
+            new=AsyncMock(return_value=stats),
+        ) as scanner:
+            response = test_client.post("/api/tasks/scan")
+
+        assert response.status_code == 200
+        assert response.json() == stats
+        scanner.assert_awaited_once_with()
+
+
+class TestConfigRoutes:
+    """Tests for the configuration HTTP presentation boundary."""
+
+    @staticmethod
+    def _snapshot(tmp_path: Path, *, interval: int = 300) -> ConfigurationSnapshot:
+        config = Config(
+            config_file=tmp_path / "config.toml",
+            data_path=tmp_path / "data.sqlite3",
+            verbose=False,
+            log_level="INFO",
+            interval=interval,
+            request_timeout=30,
+            max_concurrent_tasks=3,
+            task_timeout=300,
+            download_retry_limit=10,
+            download_stall_timeout=120.0,
+            download_url_refresh_retries=2,
+            retry_failed_tasks=False,
+            credential=ConfigCredential(sessdata="stored-secret"),
+            favorite_list={"-1": FavoriteListConfig(fid="-1", path="sync/")},
+        )
+        return ConfigurationSnapshot(config=config, revision="revision-1")
+
+    def test_get_config_builds_secret_safe_document(self, test_client, tmp_path):
+        snapshot = self._snapshot(tmp_path)
+        with patch(
+            "blsync.routes.config.config_store.get_snapshot",
+            return_value=snapshot,
+        ):
+            response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        document = response.json()
+        assert document["revision"] == "revision-1"
+        assert document["values"]["interval"] == 300
+        assert document["values"]["credential"]["sessdata"] is None
+        assert document["secret_status"]["sessdata"] is True
+
+    def test_patch_config_builds_document_from_updated_snapshot(
+        self, test_client, tmp_path
+    ):
+        snapshot = self._snapshot(tmp_path, interval=120)
+        update = AsyncMock(return_value=snapshot)
+        with patch("blsync.routes.config.config_store.update", new=update):
+            response = test_client.patch(
+                "/api/config",
+                json={"revision": "revision-0", "changes": {"interval": 120}},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["values"]["interval"] == 120
+        update.assert_awaited_once_with("revision-0", {"interval": 120})
+
+
 class TestGetVideoInfo:
     """Tests for GET /api/video/info endpoint."""
 
@@ -256,12 +329,12 @@ class TestGetVideoInfo:
 
     def test_get_video_info_not_found(self, test_dal):
         """Test getting video info for non-existent video."""
-        with patch("blsync.api.get_config") as mock_config:
+        with patch("blsync.routes.video.get_config") as mock_config:
             mock_config.return_value = MagicMock()
             mock_scraper = MagicMock()
             mock_scraper.get_video_info = AsyncMock(return_value=None)
-            with patch("blsync.api.BScraper", return_value=mock_scraper):
-                with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.video.BScraper", return_value=mock_scraper):
+                with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                     client = TestClient(app)
                     response = client.get("/api/video/info?bvid=INVALID")
 
@@ -411,7 +484,7 @@ class TestGetTaskDetail:
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.get(f"/api/tasks/{task.id}")
 
@@ -435,7 +508,7 @@ class TestGetTaskDetail:
         mock_get_session = MagicMock(return_value=mock_session_cm())
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.get("/api/tasks/99999")
 
@@ -457,7 +530,7 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_stream_task_events_replays_latest_snapshot(self, test_dal):
-        from blsync.api import stream_task_events
+        from blsync.routes.tasks import stream_task_events
 
         task = await test_dal.create_bili_video_task("BV123456", "fav123", {})
         get_progress_broker().publish(
@@ -471,7 +544,7 @@ class TestTaskEvents:
             ),
         )
 
-        with patch("blsync.api.get_task_dal", return_value=test_dal):
+        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
             response = await stream_task_events(task.id)
             first_chunk = await anext(response.body_iterator)
             await response.body_iterator.aclose()
@@ -481,11 +554,11 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_stream_task_events_closes_cleanly_while_waiting(self, test_dal):
-        from blsync.api import stream_task_events
+        from blsync.routes.tasks import stream_task_events
 
         task = await test_dal.create_bili_video_task("BV123456", "fav123", {})
 
-        with patch("blsync.api.get_task_dal", return_value=test_dal):
+        with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
             response = await stream_task_events(task.id)
             stream_task = asyncio.create_task(anext(response.body_iterator))
             await asyncio.sleep(0)
@@ -592,7 +665,9 @@ class TestFileRoutes:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
-    def test_get_task_files_ignores_non_video_files(self, test_client, test_dal, tmp_path):
+    def test_get_task_files_ignores_non_video_files(
+        self, test_client, test_dal, tmp_path
+    ):
         cover = tmp_path / "cover.jpg"
         cover.write_bytes(b"cover")
         task = self._create_completed_task_with_files(test_dal, [cover])
@@ -632,7 +707,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status", json={"status": "ready"}
@@ -648,7 +723,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status", json={"status": "consuming"}
@@ -664,7 +739,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status", json={"status": "completed"}
@@ -680,7 +755,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",
@@ -697,7 +772,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status", json={"status": "failed"}
@@ -714,7 +789,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status", json={"status": "invalid_status"}
@@ -728,7 +803,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task=None))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     "/api/tasks/99999/status", json={"status": "completed"}
@@ -752,7 +827,7 @@ class TestUpdateTaskStatus:
         mock_get_session = MagicMock(return_value=self._create_mock_session(task))
 
         with patch.object(test_dal, "get_session", mock_get_session):
-            with patch("blsync.api.get_task_dal", return_value=test_dal):
+            with patch("blsync.routes.tasks.get_task_dal", return_value=test_dal):
                 client = TestClient(app)
                 response = client.put(
                     f"/api/tasks/{task.id}/status",

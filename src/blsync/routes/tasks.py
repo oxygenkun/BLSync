@@ -1,38 +1,25 @@
-"""
-FastAPI routes and request handlers.
-"""
+"""Routes for task creation, querying, control, and progress streaming."""
 
 import asyncio
 import json
-import os
 from contextlib import suppress
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
-from blsync.configuration.store import get_config
-from blsync.consumer.bilibili import VIDEO_FILE_SUFFIXES, BiliVideoTaskContext
-from blsync.database import get_task_dal, get_video_dal
-from blsync.model.task import TaskModel, TaskStatus
+from blsync.consumer.bilibili import BiliVideoTaskContext
+from blsync.db import get_task_dal, get_video_dal
+from blsync.db.task import TaskStatus
 from blsync.progress import get_progress_broker
-from blsync.scraper import BScraper
+from blsync.routes.files import (
+    downloaded_video_files_from_task_data,
+    task_file_summaries,
+)
+from blsync.services.favorite_scanner import scan_favorites_once
 
-# 支持通过环境变量指定项目根目录，默认使用相对路径计算
-# 本地开发: 自动计算，Docker: 通过环境变量设置为 /app
-BASE_DIR = Path(os.environ.get("BLSYNC_BASE_DIR", Path(__file__).parents[2]))
-STATIC_DIR = BASE_DIR / "static"
-
-# API 路由器（带 /api 前缀）
-api_router = APIRouter()
-
-# 文件路由器（不带 /api 前缀）
-file_router = APIRouter()
-
-# 前端路由器（不带前缀）
-frontend_router = APIRouter()
+router = APIRouter(tags=["任务"])
 
 
 class TaskRequest(BaseModel):
@@ -54,67 +41,6 @@ class BatchUpdateTaskStatusRequest(BaseModel):
 
 class BatchDeleteTasksRequest(BaseModel):
     task_ids: list[int]  # 任务 id 列表
-
-
-VIDEO_MEDIA_TYPES = {
-    ".mp4": "video/mp4",
-    ".m4v": "video/mp4",
-    ".mkv": "video/x-matroska",
-    ".flv": "video/x-flv",
-    ".mov": "video/quicktime",
-    ".webm": "video/webm",
-}
-
-
-async def _task_downloaded_video_files(task: TaskModel) -> list[Path]:
-    """Return recorded video files, preferring the download_files table."""
-    records = await get_video_dal().get_files_by_task(task.id, file_type="video")
-    files = [
-        path
-        for record in records
-        if (path := record.absolute_path).exists() and path.is_file()
-    ]
-    if files:
-        return files
-    # 兼容历史任务：回退到 task_data JSON 中的 downloaded_files
-    return _downloaded_video_files_from_task_data(task.task_data)
-
-
-def _downloaded_video_files_from_task_data(task_data: str) -> list[Path]:
-    try:
-        downloaded_files = json.loads(task_data).get("downloaded_files", [])
-    except (TypeError, json.JSONDecodeError):
-        return []
-
-    if not isinstance(downloaded_files, list):
-        return []
-
-    files: list[Path] = []
-    for path_value in downloaded_files:
-        if not isinstance(path_value, str):
-            continue
-
-        path = Path(path_value)
-        if path.suffix.lower() not in VIDEO_FILE_SUFFIXES:
-            continue
-        if not path.exists() or not path.is_file():
-            continue
-
-        files.append(path)
-
-    return files
-
-
-def _task_file_summaries(task_id: int, files: list[Path]) -> list[dict[str, object]]:
-    return [
-        {
-            "index": index,
-            "name": path.name,
-            "size": path.stat().st_size,
-            "download_url": f"/file/{task_id}/{index}",
-        }
-        for index, path in enumerate(files)
-    ]
 
 
 def _task_video_summary(video) -> dict[str, object]:
@@ -140,93 +66,7 @@ def _task_bvid(task_key: str) -> str | None:
     return bvid if isinstance(bvid, str) else None
 
 
-async def _get_completed_task_for_file(task_id: int) -> TaskModel:
-    task_dal = get_task_dal()
-    task = await task_dal.get_task_by_id(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    if task.status != TaskStatus.COMPLETED.value:
-        raise HTTPException(status_code=409, detail=f"Task {task_id} is not completed")
-    return task
-
-
-@file_router.get("/file/{task_id}", tags=["文件"], summary="获取任务下载文件列表")
-async def get_task_files(task_id: int):
-    """Return video files recorded for a completed task."""
-    task = await _get_completed_task_for_file(task_id)
-    files = await _task_downloaded_video_files(task)
-    if not files:
-        raise HTTPException(status_code=404, detail="No downloaded video files found")
-
-    return {
-        "task_id": task_id,
-        "files": _task_file_summaries(task_id, files),
-    }
-
-
-@file_router.get(
-    "/file/{task_id}/{file_index}",
-    tags=["文件"],
-    summary="下载任务视频文件",
-)
-async def download_task_file(task_id: int, file_index: int) -> FileResponse:
-    """Download one recorded video file by task id and file index."""
-    task = await _get_completed_task_for_file(task_id)
-    files = await _task_downloaded_video_files(task)
-    if file_index < 0 or file_index >= len(files):
-        raise HTTPException(status_code=404, detail="Downloaded file not found")
-
-    path = files[file_index]
-    return FileResponse(
-        path=str(path),
-        filename=path.name,
-        media_type=VIDEO_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream"),
-        content_disposition_type="inline",
-    )
-
-
-@frontend_router.get("/", tags=["前端"], summary="前端页面")
-async def read_root() -> FileResponse:
-    """
-    返回前端页面
-
-    访问此接口将返回 BLSync 的前端管理界面，用于提交 Bilibili 视频下载任务。
-    """
-    index_file = STATIC_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(str(index_file), media_type="text/html")
-    else:
-        raise HTTPException(status_code=404, detail="Frontend page not found")
-
-
-# Catch-all route for SPA (Single Page Application) routing
-# 所有其他路由都返回 index.html，由 React Router 处理
-@frontend_router.get("/{full_path:path}", tags=["前端"], summary="SPA 路由")
-async def spa_fallback(full_path: str) -> FileResponse:
-    """
-    支持 React Router 的客户端路由
-
-    对于任何不是 API 请求的路由，返回 index.html。
-    这样 React Router 可以在前端处理路由（如 /tasks, /add-task 等）。
-
-    注意：直接处理 /assets 路径的静态文件请求。
-    """
-    # 处理静态资源文件
-    if full_path.startswith("assets/"):
-        asset_path = STATIC_DIR / full_path
-        if asset_path.exists() and asset_path.is_file():
-            return FileResponse(str(asset_path))
-
-    # 其他所有路径返回 index.html，由 React Router 处理
-    index_file = STATIC_DIR / "index.html"
-    logger.info(index_file)
-    if index_file.exists():
-        return FileResponse(str(index_file), media_type="text/html")
-    else:
-        raise HTTPException(status_code=404, detail="Frontend page not found")
-
-
-@api_router.post("/task/bili", tags=["任务"], summary="创建 Bilibili 下载任务")
+@router.post("/task/bili", summary="创建 Bilibili 下载任务")
 async def create_task(task: TaskRequest):
     """
     创建 Bilibili 视频下载任务
@@ -275,7 +115,10 @@ async def create_task(task: TaskRequest):
             else:
                 return {
                     "status": "updated",
-                    "message": f"Task {task.bid} context updated (status: {existing_status.value})",
+                    "message": (
+                        f"Task {task.bid} context updated "
+                        f"(status: {existing_status.value})"
+                    ),
                     "task_id": task_model.id if task_model else None,
                 }
 
@@ -296,7 +139,7 @@ async def create_task(task: TaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.get("/tasks/status", tags=["任务"], summary="获取任务队列状态")
+@router.get("/tasks/status", summary="获取任务队列状态")
 async def get_task_status():
     """
     获取当前任务队列的状态信息
@@ -317,11 +160,9 @@ async def get_task_status():
     }
 
 
-@api_router.post("/tasks/scan", tags=["任务"], summary="立即扫描收藏夹")
+@router.post("/tasks/scan", summary="立即扫描收藏夹")
 async def scan_tasks():
     """Trigger one immediate favorite scan using the producer workflow."""
-    from blsync.main import scan_favorites_once
-
     try:
         return await scan_favorites_once()
     except Exception as e:
@@ -329,33 +170,7 @@ async def scan_tasks():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.get("/video/info", tags=["视频"], summary="获取视频详细信息")
-async def get_video_info(bvid: str = Query(..., description="视频BV号")):
-    """
-    根据 BV 号获取视频详细信息，包括标题、封面、作者、分P列表等。
-    """
-    config = get_config()
-    scraper = BScraper(config)
-
-    video_info = await scraper.get_video_info(bvid)
-    if video_info is None:
-        raise HTTPException(status_code=404, detail="视频不存在或已失效")
-
-    return {
-        "bvid": bvid,
-        "title": video_info.get("title"),
-        "pic": video_info.get("pic"),
-        "desc": video_info.get("desc"),
-        "videos": video_info.get("videos", 1),  # 分P数量
-        "pages": video_info.get("pages", []),  # 分P详情列表
-        "owner": {
-            "name": video_info.get("owner", {}).get("name"),
-            "face": video_info.get("owner", {}).get("face"),
-        },
-    }
-
-
-@api_router.get("/tasks", tags=["任务"], summary="分页获取任务列表")
+@router.get("/tasks", summary="分页获取任务列表")
 async def get_tasks(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -406,13 +221,13 @@ async def get_tasks(
         ]
         if not files:
             # 兼容历史任务：回退到 task_data JSON 中的 downloaded_files
-            files = _downloaded_video_files_from_task_data(item["task_data"])
-        item["files"] = _task_file_summaries(item["id"], files)
+            files = downloaded_video_files_from_task_data(item["task_data"])
+        item["files"] = task_file_summaries(item["id"], files)
 
     return result
 
 
-@api_router.get("/tasks/events", tags=["任务"], summary="订阅任务变更")
+@router.get("/tasks/events", summary="订阅任务变更")
 async def stream_all_task_events():
     """Stream future task events across the whole queue as SSE."""
 
@@ -443,7 +258,7 @@ async def stream_all_task_events():
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@api_router.get("/tasks/{task_id}", tags=["任务"], summary="获取任务详情")
+@router.get("/tasks/{task_id}", summary="获取任务详情")
 async def get_task_detail(task_id: int):
     """
     获取单个任务的详细信息。
@@ -451,7 +266,7 @@ async def get_task_detail(task_id: int):
     task_dal = get_task_dal()
 
     async with task_dal.async_session() as session:
-        from blsync.model.task import TaskModel, select
+        from blsync.db.task import TaskModel, select
 
         stmt = select(TaskModel).where(TaskModel.id == task_id)
         result = await session.execute(stmt)
@@ -463,12 +278,12 @@ async def get_task_detail(task_id: int):
         return task_dal._task_to_dict(task)
 
 
-@api_router.get("/tasks/{task_id}/events", tags=["任务"], summary="订阅任务进度")
+@router.get("/tasks/{task_id}/events", summary="订阅任务进度")
 async def stream_task_events(task_id: int):
     """Stream latest and future progress events for one task as SSE."""
     task_dal = get_task_dal()
     async with task_dal.async_session() as session:
-        from blsync.model.task import TaskModel, select
+        from blsync.db.task import TaskModel, select
 
         stmt = select(TaskModel.id).where(TaskModel.id == task_id)
         result = await session.execute(stmt)
@@ -502,7 +317,7 @@ async def stream_task_events(task_id: int):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@api_router.put("/tasks/{task_id}/status", tags=["任务"], summary="手动修改任务状态")
+@router.put("/tasks/{task_id}/status", summary="手动修改任务状态")
 async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
     """
     手动修改任务状态。
@@ -521,14 +336,17 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
     if request.status not in valid_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status '{request.status}'. Valid values are: {', '.join(valid_statuses)}",
+            detail=(
+                f"Invalid status '{request.status}'. "
+                f"Valid values are: {', '.join(valid_statuses)}"
+            ),
         )
 
     task_dal = get_task_dal()
 
     # 通过 task_id 获取任务
     async with task_dal.async_session() as session:
-        from blsync.model.task import TaskModel, select
+        from blsync.db.task import TaskModel, select
 
         stmt = select(TaskModel).where(TaskModel.id == task_id)
         result = await session.execute(stmt)
@@ -564,7 +382,7 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
         return task_dal._task_to_dict(task)
 
 
-@api_router.put("/tasks/status", tags=["任务"], summary="批量修改任务状态")
+@router.put("/tasks/status", summary="批量修改任务状态")
 async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
     """
     批量修改任务状态。
@@ -576,7 +394,10 @@ async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
     if request.status not in valid_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid status '{request.status}'. Valid values are: {', '.join(valid_statuses)}",
+            detail=(
+                f"Invalid status '{request.status}'. "
+                f"Valid values are: {', '.join(valid_statuses)}"
+            ),
         )
 
     new_status = TaskStatus(request.status)
@@ -589,7 +410,7 @@ async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
     task_dal = get_task_dal()
 
     async with task_dal.async_session() as session:
-        from blsync.model.task import TaskModel, select
+        from blsync.db.task import TaskModel, select
 
         stmt = select(TaskModel).where(TaskModel.id.in_(request.task_ids))
         result = await session.execute(stmt)
@@ -620,7 +441,7 @@ async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
         return {"succeeded": [task.id for task in tasks], "failed": failed}
 
 
-@api_router.delete("/tasks", tags=["任务"], summary="批量删除任务")
+@router.delete("/tasks", summary="批量删除任务")
 async def batch_delete_tasks(request: BatchDeleteTasksRequest):
     """
     批量删除任务。
@@ -630,7 +451,7 @@ async def batch_delete_tasks(request: BatchDeleteTasksRequest):
     task_dal = get_task_dal()
 
     async with task_dal.async_session() as session:
-        from blsync.model.task import TaskModel, delete, select
+        from blsync.db.task import TaskModel, delete, select
 
         stmt = select(TaskModel.id).where(TaskModel.id.in_(request.task_ids))
         result = await session.execute(stmt)
@@ -649,7 +470,7 @@ async def batch_delete_tasks(request: BatchDeleteTasksRequest):
         return {"succeeded": sorted(found_ids), "failed": failed}
 
 
-@api_router.post("/tasks/{task_id}/pause", tags=["任务"], summary="暂停任务")
+@router.post("/tasks/{task_id}/pause", summary="暂停任务")
 async def pause_task(task_id: int):
     """
     暂停一个任务。
@@ -679,7 +500,7 @@ async def pause_task(task_id: int):
     return task_dal._task_to_dict(updated)
 
 
-@api_router.post("/tasks/{task_id}/resume", tags=["任务"], summary="继续任务")
+@router.post("/tasks/{task_id}/resume", summary="继续任务")
 async def resume_task(task_id: int):
     """
     继续一个已暂停的任务：置回 ready 由 consumer 重新调度，下载断点续传。
@@ -702,11 +523,3 @@ async def resume_task(task_id: int):
             detail=f"Task {task_id} is still owned and cannot be resumed",
         )
     return task_dal._task_to_dict(updated)
-
-
-def start_server():
-    import uvicorn
-
-    from blsync.main import app
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)

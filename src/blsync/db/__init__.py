@@ -3,8 +3,9 @@ Shared database utilities and initialization.
 """
 
 from blsync.configuration.store import get_config
-from blsync.model.task import BiliVideoTaskDAL
-from blsync.model.video import VideoDAL
+
+from .task import BiliVideoTaskDAL
+from .video import VideoDAL
 
 # Global task database access layer
 _task_dal: BiliVideoTaskDAL | None = None
