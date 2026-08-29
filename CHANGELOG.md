@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-29
+
 ### Added
 - 新增视频元信息存储：视频与分P的标题、UP主（名称、uid）、简介、标签、点赞收藏硬币转发等统计落库（`videos`、`video_pages` 表）
 - 新增下载文件位置表（`download_files`），记录下载产物的最终实体路径与文件类型；文件传输接口优先从该表读取，历史任务回退到任务上下文
 - yutto wrapper 注入分P元信息（cid/序号/标题），下载文件记录可关联到具体分P
+
+### Changed
+- 前端版本号与后端对齐，统一使用 `0.6.0` 并打上 `v0.6.0` tag
+- 升级 Python 与前端依赖至最新兼容版本
+- 更新前端子模块到 `v0.6.0`
+
+### Fixed
+- 修复前端 `TaskTable` 中手动 `useMemo` 与 React Compiler 不兼容导致的 lint 错误
 
 ## [0.5.0] - 2026-05-16
 
@@ -185,7 +195,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/oxygenkun/BLSync/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/oxygenkun/BLSync/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/oxygenkun/BLSync/compare/v0.4.0...v0.4.2
