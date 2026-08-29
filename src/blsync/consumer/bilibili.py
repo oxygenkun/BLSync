@@ -2,6 +2,7 @@
 Bilibili消费者模块 - 处理Bilibili相关的下载任务
 """
 
+import os
 import pathlib
 from datetime import datetime
 from functools import lru_cache
@@ -54,6 +55,33 @@ FILE_TYPE_BY_SUFFIX = {
     ".vtt": "subtitle",
     ".xml": "danmaku",
 }
+
+
+def _absolute_project_base() -> pathlib.Path:
+    """项目根绝对路径。
+
+    yutto 传回的下载路径（如 ``sync/202608/xxx.mp4``）是相对工作目录的，
+    而 ``download_path``（config 中 ``path``）通常也是相对路径。
+    因此解析相对路径时应以「项目根」为基准，而不是 ``download_path`` 本身，
+    否则会把 ``sync/202608`` 这类前缀重复拼接、导致找不到文件。
+
+    基准优先取 ``BLSYNC_BASE_DIR`` 环境变量，其次为当前工作目录。
+    """
+    base = os.environ.get("BLSYNC_BASE_DIR")
+    if base:
+        return pathlib.Path(base).resolve()
+    return pathlib.Path.cwd()
+
+
+def _resolve_yutto_abs_path(yutto_path: pathlib.Path) -> pathlib.Path:
+    """把 yutto 报出的路径统一解析为绝对路径。
+
+    - 已是绝对路径：直接 resolve；
+    - 相对路径：相对项目根（如 ``sync/202608/xxx.mp4`` -> ``<根>/sync/202608/xxx.mp4``）。
+    """
+    if yutto_path.is_absolute():
+        return yutto_path.resolve()
+    return (_absolute_project_base() / yutto_path).resolve()
 
 
 class BiliVideoTaskContext(TaskContext):
@@ -211,12 +239,11 @@ class BiliVideoTask(Task):
         yutto_paths: list[pathlib.Path],
     ) -> list[tuple[pathlib.Path, str]]:
         """收集下载产出的最终实体文件（媒体文件及同 stem 的封面、元数据等）。"""
-        base_path = download_path.resolve()
         files: list[tuple[pathlib.Path, str]] = []
         seen: set[pathlib.Path] = set()
 
         for yutto_path in yutto_paths:
-            path = yutto_path if yutto_path.is_absolute() else base_path / yutto_path
+            path = _resolve_yutto_abs_path(yutto_path)
             for candidate in cls._iter_output_candidates(path):
                 try:
                     resolved_path = candidate.resolve()
@@ -286,15 +313,12 @@ class BiliVideoTask(Task):
             page_id_by_index = {page.page_index: page.id for page in pages}
 
             # yutto 输出的媒体文件 stem → 分P id，封面/元数据等产物与媒体文件同 stem，一并关联
-            base_path = download_path.resolve()
             page_id_by_stem: dict[tuple[str, str], int] = {}
             for episode in downloaded_episodes:
                 raw_path = pathlib.Path(str(episode.get("path", "")))
                 if not raw_path.parts:
                     continue
-                episode_path = (
-                    raw_path if raw_path.is_absolute() else base_path / raw_path
-                ).resolve()
+                episode_path = _resolve_yutto_abs_path(raw_path)
                 page_id = page_id_by_cid.get(episode.get("page_cid"))
                 if page_id is None:
                     page_id = page_id_by_index.get(episode.get("page_index"))
