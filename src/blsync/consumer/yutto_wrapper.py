@@ -768,6 +768,11 @@ async def _bounded_yutto_download_file_with_offset(
                     "semaphore released too many times" not in str(error).lower()
                 ):
                     raise
+                if size is not None and block_offset >= size:
+                    # All requested bytes were already received and written; the
+                    # failure is a stream reset after full delivery (Bilibili CDN
+                    # HTTP/2 quirk at end-of-file range requests), not a real error.
+                    return
                 consecutive_failures += 1
                 error_type = type(error).__name__
                 logger.warning(
