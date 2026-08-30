@@ -179,9 +179,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $version = "${{ steps.package.outputs.version }}"
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $pattern = "(?ms)^## \[$([regex]::Escape($version))\].*?\r?\n(?<notes>.*?)(?=^## \[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+          if (-not $match.Success) {
+            throw "CHANGELOG.md does not contain release notes for $version"
+          }
+          $releaseNotes = Join-Path $env:RUNNER_TEMP "release-notes-$version.md"
+          "## $version`n`n$($match.Groups['notes'].Value.Trim())" |
+            Set-Content -LiteralPath $releaseNotes -Encoding utf8
+
           gh release create "${{ github.ref_name }}" `
             --repo "${{ github.repository }}" `
-            --title "BLSync ${{ steps.package.outputs.version }}" `
-            --generate-notes `
+            --title "BLSync $version" `
+            --notes-file $releaseNotes `
             "${{ steps.package.outputs.installer }}#Windows x64 installer" `
             "${{ steps.package.outputs.portable_archive }}#Windows x64 portable edition"
