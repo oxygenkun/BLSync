@@ -1,6 +1,6 @@
 [package]
 name = "blsync-desktop"
-version = "0.6.0"
+version = "0.7.0"
 description = "BLSync desktop application"
 authors = ["oxygenkun"]
 edition = "2021"

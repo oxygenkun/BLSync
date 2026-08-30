@@ -27,6 +27,14 @@
 
 # 使用
 
+## Windows 桌面版（推荐）
+
+从 [GitHub Releases](https://github.com/oxygenkun/BLSync/releases) 下载与当前版本对应的 Windows x64 安装包或便携版
+
+首次启动会自动创建配置和下载目录；可在“设置”页面修改运行配置，并使用扫码登录获取 Bilibili 凭证。
+
+便携版优先把配置、数据库和下载文件保存在程序同目录的 `BLSyncData` 中；如果程序目录不可写，则使用系统应用数据目录。
+
 ## Docker Compose 运行（推荐）
 
 > 你需要了解docker compose的基本用法。
@@ -83,7 +91,11 @@ uv run bs -c config/config.toml
 
 > `bs` 是项目提供的命令行工具，通过 pyproject.toml 中的 `[project.scripts]` 定义
 
-# 配置文件
+# 配置与登录
+
+WebUI 和桌面版均可在“设置”页面管理常用配置、收藏夹任务以及 Bilibili 登录凭证。扫码登录成功后请保存配置，再按需触发收藏夹扫描。
+
+也可以直接编辑配置文件：
 
 默认读取 `./config/config.toml` 文件 （参考模板文件 [`./config/config.template.toml`](./config/config.template.toml) 中的说明）。
 

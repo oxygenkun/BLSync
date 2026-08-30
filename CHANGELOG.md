@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-30
+
+### Added
+- 新增 Windows 桌面版，提供 x64 安装包与便携版，并内置 BLSync 后端和 FFmpeg
+- 新增 WebUI 运行时配置管理，可编辑全局设置、收藏夹任务与下载目录
+- 新增 Bilibili 扫码登录，可在 WebUI 中获取并保存登录凭证
+- 新增“关于”页面，展示项目版本、GitHub 仓库与作者信息
+- 新增视频文件访问接口与下载文件基础路径迁移
+
+### Changed
+- 重构后端 API、数据库与配置模块，拆分路由、服务和配置存储层
+- 适配 yutto 2.3，并简化下载封装与不再支持的旧配置项
+- 优化任务状态、失败重试、下载存储和时区处理
+
+### Fixed
+- 修复新版 yutto 不支持的参数仍被传入的问题
+- 修复桌面端文件打开、配置保存及界面布局问题
+- 修复任务完成态无法重试及部分错误合并显示问题
+
 ## [0.6.0] - 2026-08-29
 
 ### Added
@@ -17,7 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - 前端版本号与后端对齐，统一使用 `0.6.0` 并打上 `v0.6.0` tag
 - 升级 Python 与前端依赖至最新兼容版本
-- 更新前端子模块到 `v0.6.0`
 
 ### Fixed
 - 修复前端 `TaskTable` 中手动 `useMemo` 与 React Compiler 不兼容导致的 lint 错误
@@ -195,7 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 完整的错误处理和日志记录
 - Docker 容器化部署，支持多架构
 
-[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/oxygenkun/BLSync/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/oxygenkun/BLSync/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/oxygenkun/BLSync/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/oxygenkun/BLSync/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/oxygenkun/BLSync/compare/v0.4.2...v0.4.3

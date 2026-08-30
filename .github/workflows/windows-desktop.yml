@@ -26,7 +26,7 @@ jobs:
     name: Build Windows x64 packages
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -151,10 +151,13 @@ jobs:
           }
           $installerOutput = Join-Path $stagingDir "BLSync-$version-windows-x64-setup.exe"
           Copy-Item $installer.FullName $installerOutput
+          $portableArchive = Join-Path $stagingDir "BLSync-$version-windows-x64-portable.zip"
+          Compress-Archive -LiteralPath $portableDir -DestinationPath $portableArchive
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=$installerOutput" >> $env:GITHUB_OUTPUT
           "portable=$portableDir" >> $env:GITHUB_OUTPUT
+          "portable_archive=$portableArchive" >> $env:GITHUB_OUTPUT
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -169,3 +172,16 @@ jobs:
           name: BLSync-${{ steps.package.outputs.version }}-windows-x64-portable
           path: ${{ steps.package.outputs.portable }}
           if-no-files-found: error
+
+      - name: Publish desktop packages to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            --repo "${{ github.repository }}" `
+            --title "BLSync ${{ steps.package.outputs.version }}" `
+            --generate-notes `
+            "${{ steps.package.outputs.installer }}#Windows x64 installer" `
+            "${{ steps.package.outputs.portable_archive }}#Windows x64 portable edition"

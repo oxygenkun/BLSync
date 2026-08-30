@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 纯 Python 实现的抖音视频提取器
@@ -10,8 +9,8 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import requests
 
@@ -30,20 +29,20 @@ class DouyinVideoInfo:
     """抖音视频信息"""
 
     def __init__(self):
-        self.aweme_id: Optional[str] = None
-        self.comment_count: Optional[int] = None
-        self.digg_count: Optional[int] = None
-        self.share_count: Optional[int] = None
-        self.collect_count: Optional[int] = None
-        self.nickname: Optional[str] = None
-        self.signature: Optional[str] = None
-        self.desc: Optional[str] = None
-        self.create_time: Optional[str] = None
-        self.video_url: Optional[str] = None
-        self.type: Optional[str] = None
-        self.image_url_list: Optional[List[str]] = None
+        self.aweme_id: str | None = None
+        self.comment_count: int | None = None
+        self.digg_count: int | None = None
+        self.share_count: int | None = None
+        self.collect_count: int | None = None
+        self.nickname: str | None = None
+        self.signature: str | None = None
+        self.desc: str | None = None
+        self.create_time: str | None = None
+        self.video_url: str | None = None
+        self.type: str | None = None
+        self.image_url_list: list[str] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "aweme_id": self.aweme_id,
             "comment_count": self.comment_count,
@@ -84,7 +83,7 @@ class PurePythonExtractor:
             }
         )
 
-    def _extract_thumbnail(self, video_path: str) -> Optional[str]:
+    def _extract_thumbnail(self, video_path: str) -> str | None:
         """
         从视频中提取缩略图
         :param video_path: 视频文件路径
@@ -106,10 +105,10 @@ class PurePythonExtractor:
 
     def format_date(self, timestamp: int) -> str:
         """格式化时间戳"""
-        date = datetime.fromtimestamp(timestamp)
+        date = datetime.fromtimestamp(timestamp, tz=UTC).astimezone()
         return date.strftime("%Y-%m-%d %H:%M:%S")
 
-    def parse_img_list(self, body: str) -> List[str]:
+    def parse_img_list(self, body: str) -> list[str]:
         """解析图片列表"""
         content = body.replace(r"\u002F", "/").replace("/", "/")
 
@@ -134,7 +133,7 @@ class PurePythonExtractor:
         print(f"📷 找到 {len(filtered_r_list)} 张图片")
         return filtered_r_list
 
-    def get_video_info(self, url: str) -> Optional[DouyinVideoInfo]:
+    def get_video_info(self, url: str) -> DouyinVideoInfo | None:
         """
         获取视频信息
         :param url: 抖音视频链接
@@ -150,7 +149,7 @@ class PurePythonExtractor:
 
             # 判断类型（视频或图片）
             video_type = "video"
-            img_list: List[str] = []
+            img_list: list[str] = []
             video_url = ""
 
             match = self.VIDEO_PATTERN.search(body)
@@ -231,7 +230,7 @@ class PurePythonExtractor:
 
     def download_video(
         self, url: str, output_dir: str, progress_callback=None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         下载视频
         :param url: 抖音视频链接
