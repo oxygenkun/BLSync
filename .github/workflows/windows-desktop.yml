@@ -144,9 +144,6 @@ jobs:
             }
           }
 
-          $portableArchive = Join-Path $stagingDir "BLSync-$version-windows-x64-portable.zip"
-          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $portableArchive
-
           $installer = Get-ChildItem (Join-Path $releaseDir "bundle/nsis") -File -Filter "*.exe" |
             Select-Object -First 1
           if (-not $installer) {
@@ -157,7 +154,7 @@ jobs:
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=$installerOutput" >> $env:GITHUB_OUTPUT
-          "portable=$portableArchive" >> $env:GITHUB_OUTPUT
+          "portable=$portableDir" >> $env:GITHUB_OUTPUT
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

@@ -1,4 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#fb7299"/>
-  <path d="M142 144h162c59 0 100 34 100 84 0 31-17 57-47 70 39 12 61 42 61 79 0 62-47 99-119 99H142V144zm82 66v62h70c20 0 32-12 32-31s-12-31-32-31h-70zm0 124v76h82c23 0 36-14 36-38 0-23-13-38-36-38h-82z" fill="white"/>
+  <rect width="512" height="512" rx="160" fill="#1c1917"/>
+  <text
+    x="256"
+    y="354"
+    fill="#fb7299"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="310"
+    font-style="italic"
+    font-weight="700"
+    text-anchor="middle"
+  >B</text>
 </svg>
