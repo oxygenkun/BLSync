@@ -32,7 +32,6 @@ class Task(ABC):
     @abstractmethod
     async def execute(self) -> None:
         """Execute the task"""
-        pass
 
     @abstractmethod
     def get_task_key(self) -> tuple:
@@ -50,4 +49,3 @@ class Postprocess(BaseModel, ABC):
     @abstractmethod
     async def execute(self) -> None:
         """Execute the postprocess"""
-        pass

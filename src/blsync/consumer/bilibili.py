@@ -2,8 +2,9 @@
 Bilibili消费者模块 - 处理Bilibili相关的下载任务
 """
 
+import os
 import pathlib
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import lru_cache
 
 import aiohttp
@@ -16,18 +17,18 @@ from bilibili_api.video import Video
 from loguru import logger
 
 # from yutto.path_templates import repair_filename
-from blsync import get_global_configs
-from blsync.configs import (
+from blsync.configuration.models import (
     Config,
     ConfigCredential,
     MovePostprocessConfig,
     RemovePostprocessConfig,
     SavePostprocessConfig,
 )
+from blsync.configuration.store import get_config
 from blsync.consumer.base import Postprocess, Task, TaskContext
 from blsync.consumer.yutto_wrapper import iter_download_video_progress
-from blsync.database import get_video_dal
-from blsync.model.video import VideoModel
+from blsync.db import get_video_dal
+from blsync.db.video import VideoModel
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
@@ -56,6 +57,33 @@ FILE_TYPE_BY_SUFFIX = {
 }
 
 
+def _absolute_project_base() -> pathlib.Path:
+    """项目根绝对路径。
+
+    yutto 传回的下载路径（如 ``sync/202608/xxx.mp4``）是相对工作目录的，
+    而 ``download_path``（config 中 ``path``）通常也是相对路径。
+    因此解析相对路径时应以「项目根」为基准，而不是 ``download_path`` 本身，
+    否则会把 ``sync/202608`` 这类前缀重复拼接、导致找不到文件。
+
+    基准优先取 ``BLSYNC_BASE_DIR`` 环境变量，其次为当前工作目录。
+    """
+    base = os.environ.get("BLSYNC_BASE_DIR")
+    if base:
+        return pathlib.Path(base).resolve()
+    return pathlib.Path.cwd()
+
+
+def _resolve_yutto_abs_path(yutto_path: pathlib.Path) -> pathlib.Path:
+    """把 yutto 报出的路径统一解析为绝对路径。
+
+    - 已是绝对路径：直接 resolve；
+    - 相对路径：相对项目根（如 ``sync/202608/xxx.mp4`` -> ``<根>/sync/202608/xxx.mp4``）。
+    """
+    if yutto_path.is_absolute():
+        return yutto_path.resolve()
+    return (_absolute_project_base() / yutto_path).resolve()
+
+
 class BiliVideoTaskContext(TaskContext):
     """Bilibili视频下载任务上下文"""
 
@@ -70,7 +98,7 @@ class BiliVideoTask(Task):
 
     def __init__(self, task_context: BiliVideoTaskContext):
         self._task_context = task_context
-        self._config = get_global_configs()
+        self._config = get_config()
         self._fav_config = self._config.favorite_list.get(
             self._task_context.task_name, self._config.favorite_list["-1"]
         )
@@ -82,7 +110,7 @@ class BiliVideoTask(Task):
     @staticmethod
     def _format_download_path(path_template: str) -> pathlib.Path:
         """格式化下载路径，支持Python format语法"""
-        now = datetime.now()
+        now = datetime.now(UTC)
         format_vars = {
             "YYYY": now.strftime("%Y"),  # 四位数年份
             "YY": now.strftime("%y"),  # 两位数年份
@@ -148,12 +176,11 @@ class BiliVideoTask(Task):
             name_template=name_template,
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
-            retry_limit=self._config.download_retry_limit,
-            stall_timeout=self._config.download_stall_timeout,
-            url_refresh_retries=self._config.download_url_refresh_retries,
         ):
             if event.downloaded_files is not None:
-                downloaded_paths = [pathlib.Path(path) for path in event.downloaded_files]
+                downloaded_paths = [
+                    pathlib.Path(path) for path in event.downloaded_files
+                ]
             if event.downloaded_episodes is not None:
                 downloaded_episodes = event.downloaded_episodes
             event = self._with_task_id(event)
@@ -189,8 +216,8 @@ class BiliVideoTask(Task):
             # 执行下载后处理
             try:
                 await self.execute_postprocess()
-            except Exception:
-                raise Exception(f"Postprocess for {bid} failed")
+            except Exception as exc:
+                raise RuntimeError(f"Postprocess for {bid} failed") from exc
         else:
             error_detail = download_error or "download ended without a completion event"
             logger.warning(
@@ -211,17 +238,18 @@ class BiliVideoTask(Task):
         yutto_paths: list[pathlib.Path],
     ) -> list[tuple[pathlib.Path, str]]:
         """收集下载产出的最终实体文件（媒体文件及同 stem 的封面、元数据等）。"""
-        base_path = download_path.resolve()
         files: list[tuple[pathlib.Path, str]] = []
         seen: set[pathlib.Path] = set()
 
         for yutto_path in yutto_paths:
-            path = yutto_path if yutto_path.is_absolute() else base_path / yutto_path
+            path = _resolve_yutto_abs_path(yutto_path)
             for candidate in cls._iter_output_candidates(path):
                 try:
                     resolved_path = candidate.resolve()
                 except OSError as e:
-                    logger.warning(f"Failed to resolve downloaded path {candidate}: {e}")
+                    logger.warning(
+                        f"Failed to resolve downloaded path {candidate}: {e}"
+                    )
                     continue
 
                 if resolved_path in seen:
@@ -286,15 +314,12 @@ class BiliVideoTask(Task):
             page_id_by_index = {page.page_index: page.id for page in pages}
 
             # yutto 输出的媒体文件 stem → 分P id，封面/元数据等产物与媒体文件同 stem，一并关联
-            base_path = download_path.resolve()
             page_id_by_stem: dict[tuple[str, str], int] = {}
             for episode in downloaded_episodes:
                 raw_path = pathlib.Path(str(episode.get("path", "")))
                 if not raw_path.parts:
                     continue
-                episode_path = (
-                    raw_path if raw_path.is_absolute() else base_path / raw_path
-                ).resolve()
+                episode_path = _resolve_yutto_abs_path(raw_path)
                 page_id = page_id_by_cid.get(episode.get("page_cid"))
                 if page_id is None:
                     page_id = page_id_by_index.get(episode.get("page_index"))
@@ -304,14 +329,22 @@ class BiliVideoTask(Task):
                     )
 
             files = []
+            base = download_path.resolve()
             for path, file_type in output_files:
                 page_id = page_id_by_stem.get((str(path.parent), path.stem))
                 if page_id is None and len(pages) == 1:
                     page_id = pages[0].id
+                try:
+                    rel_path = path.relative_to(base)
+                    file_base, file_path = str(base), str(rel_path)
+                except ValueError:
+                    # 产物不在下载目录内，回退为绝对路径存 file_path（file_base 为空）
+                    file_base, file_path = None, str(path)
                 files.append(
                     {
                         "file_type": file_type,
-                        "file_path": str(path),
+                        "file_base": file_base,
+                        "file_path": file_path,
                         "file_size": path.stat().st_size if path.exists() else None,
                         "page_id": page_id,
                     }
@@ -392,7 +425,7 @@ class BiliVideoPostprocessMove(Postprocess):
         self._post_config = post_config
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
@@ -422,7 +455,7 @@ class BiliVideoPostprocessRemove(Postprocess):
         self._task_context = task_context
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
@@ -452,7 +485,7 @@ class BiliVideoPostprocessSave(Postprocess):
         self._post_config = post_config
 
         if not config:
-            config = get_global_configs()
+            config = get_config()
         self._config = config
 
     async def execute(self) -> None:
@@ -507,8 +540,7 @@ async def download_file(url, download_path: pathlib.Path):
             download_path = download_path.with_name(f"{stem}_{counter}{suffix}")
             counter += 1
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            download_path.write_bytes(await resp.read())
+    async with aiohttp.ClientSession() as session, session.get(url) as resp:
+        download_path.write_bytes(await resp.read())
     logger.info(f"Downloaded {url} to {download_path}")
     return True

@@ -98,6 +98,7 @@ class MyCustomTaskContext(TaskContext):
     param1: str
     param2: int
 
+
 class MyCustomTask(Task):
     def __init__(self, task_context: MyCustomTaskContext):
         self._task_context = task_context

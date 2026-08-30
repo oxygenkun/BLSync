@@ -1,12 +1,12 @@
-"""Test video metadata and download file models."""
+"""Test video metadata and download file ORM models."""
 
 import json
 
 import pytest
 from sqlalchemy import text
 
-from blsync.model.task import BiliVideoTaskDAL
-from blsync.model.video import VideoDAL
+from blsync.db.task import BiliVideoTaskDAL
+from blsync.db.video import VideoDAL
 
 
 def _make_video_info(
@@ -150,9 +150,24 @@ async def test_replace_and_get_task_files():
     pages = await video_dal.get_video_pages(video.id)
 
     files = [
-        {"file_type": "video", "file_path": "/data/sync/测试视频.mp4", "file_size": 1024, "page_id": pages[0].id},
-        {"file_type": "cover", "file_path": "/data/sync/测试视频-poster.jpg", "file_size": 256, "page_id": pages[0].id},
-        {"file_type": "metadata", "file_path": "/data/sync/测试视频.nfo", "file_size": 128, "page_id": None},
+        {
+            "file_type": "video",
+            "file_path": "/data/sync/测试视频.mp4",
+            "file_size": 1024,
+            "page_id": pages[0].id,
+        },
+        {
+            "file_type": "cover",
+            "file_path": "/data/sync/测试视频-poster.jpg",
+            "file_size": 256,
+            "page_id": pages[0].id,
+        },
+        {
+            "file_type": "metadata",
+            "file_path": "/data/sync/测试视频.nfo",
+            "file_size": 128,
+            "page_id": None,
+        },
     ]
     records = await video_dal.replace_task_files(
         task_id=task.id,
@@ -180,7 +195,12 @@ async def test_replace_and_get_task_files():
         task_id=task.id,
         video_id=video.id,
         files=[
-            {"file_type": "video", "file_path": "/data/sync/测试视频.mp4", "file_size": 2048, "page_id": pages[0].id},
+            {
+                "file_type": "video",
+                "file_path": "/data/sync/测试视频.mp4",
+                "file_size": 2048,
+                "page_id": pages[0].id,
+            },
         ],
     )
     replaced = await video_dal.get_files_by_task(task.id)

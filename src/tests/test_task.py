@@ -1,4 +1,4 @@
-"""Test Task database models and SQLite creation."""
+"""Test task ORM models and SQLite creation."""
 
 import asyncio
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
-from blsync.model.task import (
+from blsync.db.task import (
     BiliVideoTaskDAL,
     TaskModel,
     TaskStatus,

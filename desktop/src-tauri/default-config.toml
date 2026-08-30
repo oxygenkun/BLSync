@@ -1,0 +1,18 @@
+interval = 60
+max_concurrent_tasks = 3
+request_timeout = 300
+task_timeout = 600
+retry_failed_tasks = false
+data_path = "data"
+log_level = "INFO"
+
+[credential]
+sessdata = ""
+bili_jct = ""
+buvid3 = ""
+dedeuserid = ""
+ac_time_value = ""
+
+[favorite_list.default]
+fid = -1
+path = "downloads/"

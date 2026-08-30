@@ -2,18 +2,52 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from yutto.core.events import DownloadProgress, DownloadStage, DownloadStageChanged
+from yutto.core.result import (
+    Artifact,
+    ArtifactKind,
+    DownloadResult,
+    ItemResult,
+    ItemState,
+    ResolvedItem,
+    ResolveResult,
+)
 
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.consumer.yutto_wrapper import (
     YuttoDownloadOptions,
-    _build_yutto_args,
-    _capture_yutto_show_progress,
-    _record_yutto_process_download,
-    _resolve_yutto_output_path,
-    _yutto_output_records,
+    _BLSyncEventSink,
+    _build_yutto_request,
+    _result_records,
     iter_download_video_progress,
 )
 from blsync.progress import DownloadProgressEvent, ProgressEventType, TaskProgressBroker
+
+
+def _resolved_item(*, cid: int = 100, name: str = "P1") -> ResolvedItem:
+    return ResolvedItem.model_validate(
+        {
+            "avid": "BV1xx411c7mD",
+            "cid": str(cid),
+            "url": "https://www.bilibili.com/video/BV1xx411c7mD",
+            "name": name,
+            "title": "Video",
+            "cover_url": "https://example.com/cover.jpg",
+            "planned_path": name,
+        }
+    )
+
+
+def _download_result(path: Path) -> DownloadResult:
+    return DownloadResult(
+        items=(
+            ItemResult(
+                state=ItemState.DONE,
+                output_path=path,
+                artifacts=(Artifact(kind=ArtifactKind.MEDIA, path=path),),
+            ),
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -33,37 +67,76 @@ async def test_progress_broker_replays_latest_event():
     await subscription.aclose()
 
 
+def test_build_yutto_request_uses_core_models(tmp_path):
+    request = _build_yutto_request(
+        YuttoDownloadOptions(
+            bvid="BV1",
+            download_path=tmp_path,
+            is_batch=True,
+            selected_episodes=[0, 2],
+            name_template="({bvid}){auto}",
+        )
+    )
+
+    assert request.source.url.endswith("/BV1")
+    assert request.scope.batch is True
+    assert request.selection.episodes == "1,3"
+    assert request.output.directory == tmp_path
+    assert request.output.subpath_template == "({bvid}){auto}"
+    assert request.resources.metadata is True
+    assert request.resources.save_cover is True
+    assert request.resources.danmaku is False
+    assert request.resources.subtitle is False
+
+
+def test_event_sink_translates_structured_progress():
+    events: list[DownloadProgressEvent] = []
+    sink = _BLSyncEventSink(bvid="BV1", emit=events.append, episode_count=2)
+
+    sink.emit(DownloadStageChanged(name=DownloadStage.DOWNLOADING, item="P1"))
+    sink.emit(
+        DownloadProgress(
+            current=25,
+            total=100,
+            speed_per_second=10.0,
+            item="P1",
+        )
+    )
+    sink.emit(DownloadStageChanged(name=DownloadStage.DOWNLOADING, item="P2"))
+    sink.emit(
+        DownloadProgress(
+            current=50,
+            total=100,
+            speed_per_second=20.0,
+            item="P2",
+        )
+    )
+
+    progress = [event for event in events if event.event is ProgressEventType.PROGRESS]
+    assert progress[0].episode_index == 1
+    assert progress[0].overall_percent == 12.5
+    assert progress[1].episode_index == 2
+    assert progress[1].overall_percent == 75.0
+
+
 @pytest.mark.asyncio
 async def test_iter_download_video_progress_emits_completed_event(tmp_path):
-    async def fake_run(_args, _verbose, callback, bvid):
-        video = tmp_path / "video.mp4"
-        video.write_bytes(b"video")
-        callback(
+    video = tmp_path / "video.mp4"
+
+    async def fake_run(_options, _request, emit):
+        emit(
             DownloadProgressEvent(
                 event=ProgressEventType.PROGRESS,
                 task_id=None,
-                bvid=bvid,
+                bvid="BV1",
                 status="downloading",
                 overall_percent=25.0,
-                episode_index=1,
-                episode_count=1,
-                episode_percent=25.0,
-                downloaded_bytes=25,
-                total_bytes=100,
-                speed_bytes_per_second=10.0,
             )
         )
-        return [
-            {
-                "path": video,
-                "page_index": 1,
-                "page_cid": 100,
-                "page_name": "P1",
-            }
-        ]
+        return ResolveResult(items=(_resolved_item(),)), _download_result(video)
 
     with patch(
-        "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
+        "blsync.consumer.yutto_wrapper._run_yutto_download",
         side_effect=fake_run,
     ):
         events = [
@@ -80,32 +153,24 @@ async def test_iter_download_video_progress_emits_completed_event(tmp_path):
         ProgressEventType.COMPLETED,
     ]
     assert events[-1].overall_percent == 100.0
+    assert events[-1].downloaded_files == [str(video)]
+    assert events[-1].downloaded_episodes == [
+        {
+            "path": str(video),
+            "page_index": 1,
+            "page_cid": 100,
+            "page_name": "P1",
+        }
+    ]
 
 
 @pytest.mark.asyncio
-async def test_iter_download_video_progress_emits_retrying_event(tmp_path):
-    from blsync.consumer.yutto_wrapper import YuttoRecoverableDownloadError
-
-    calls = 0
-
-    async def fake_run(_args, _verbose, _callback, _bvid):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise YuttoRecoverableDownloadError([])
-        video = tmp_path / "video.mp4"
-        video.write_bytes(b"video")
-        return [
-            {
-                "path": video,
-                "page_index": 1,
-                "page_cid": 100,
-                "page_name": "P1",
-            }
-        ]
+async def test_iter_download_video_progress_emits_failed_event(tmp_path):
+    async def fake_run(_options, _request, _emit):
+        raise RuntimeError("native transfer failed")
 
     with patch(
-        "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
+        "blsync.consumer.yutto_wrapper._run_yutto_download",
         side_effect=fake_run,
     ):
         events = [
@@ -118,48 +183,31 @@ async def test_iter_download_video_progress_emits_retrying_event(tmp_path):
 
     assert [event.event for event in events] == [
         ProgressEventType.STATUS,
-        ProgressEventType.STATUS,
-        ProgressEventType.COMPLETED,
+        ProgressEventType.FAILED,
     ]
-    assert events[1].status == "retrying"
-    assert events[-1].downloaded_files == [str(tmp_path / "video.mp4")]
+    assert events[-1].message == "native transfer failed"
 
 
-@pytest.mark.asyncio
-async def test_iter_download_video_progress_emits_downloaded_files(tmp_path):
-    video = tmp_path / "video.mp4"
-    video.write_bytes(b"video")
+def test_result_records_preserve_selected_page_numbers(tmp_path):
+    video = tmp_path / "p3.mp4"
+    options = YuttoDownloadOptions(
+        bvid="BV1",
+        download_path=tmp_path,
+        selected_episodes=[2],
+    )
 
-    async def fake_run(_args, _verbose, _callback, _bvid):
-        return [
-            {
-                "path": video,
-                "page_index": 1,
-                "page_cid": 100,
-                "page_name": "P1",
-            }
-        ]
+    records = _result_records(
+        options,
+        ResolveResult(items=(_resolved_item(cid=300, name="P3"),)),
+        _download_result(video),
+    )
 
-    with patch(
-        "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
-        side_effect=fake_run,
-    ):
-        events = [
-            event
-            async for event in iter_download_video_progress(
-                bvid="BV1",
-                download_path=tmp_path,
-            )
-        ]
-
-    assert events[-1].event == ProgressEventType.COMPLETED
-    assert events[-1].downloaded_files == [str(video)]
-    assert events[-1].downloaded_episodes == [
+    assert records == [
         {
             "path": str(video),
-            "page_index": 1,
-            "page_cid": 100,
-            "page_name": "P1",
+            "page_index": 3,
+            "page_cid": 300,
+            "page_name": "P3",
         }
     ]
 
@@ -183,125 +231,3 @@ def test_bili_video_task_expands_yutto_path_prefix_to_video_file(tmp_path):
     files = BiliVideoTask._collect_output_files(tmp_path, [tmp_path / "episode"])
 
     assert files == [(video.resolve(), "video")]
-
-
-def test_yutto_output_path_uses_yutto_resolved_filename(tmp_path):
-    episode_data = {
-        "path": "episode",
-        "videos": ["video"],
-        "audios": ["audio"],
-    }
-    options = {
-        "output_dir": tmp_path,
-        "tmp_dir": tmp_path,
-        "video_quality": 0,
-        "video_download_codec": "avc",
-        "video_download_codec_priority": None,
-        "audio_quality": 0,
-        "audio_download_codec": "mp4a",
-        "require_video": True,
-        "require_audio": True,
-        "output_format": "infer",
-        "output_format_audio_only": "infer",
-    }
-
-    with (
-        patch(
-            "blsync.consumer.yutto_wrapper.yutto_downloader.select_video",
-            return_value={"codec": "avc"},
-        ),
-        patch(
-            "blsync.consumer.yutto_wrapper.yutto_downloader.select_audio",
-            return_value={"codec": "mp4a"},
-        ),
-    ):
-        path = _resolve_yutto_output_path(episode_data, options)
-
-    assert path == tmp_path / "episode.mp4"
-
-
-@pytest.mark.asyncio
-async def test_yutto_output_path_resolution_failure_does_not_fail_download(tmp_path):
-    async def fake_process_download(_ctx, _client, _episode_data, _options):
-        return None
-
-    output_records: list[object] = []
-    output_records_token = _yutto_output_records.set(output_records)
-    try:
-        with (
-            patch(
-                "blsync.consumer.yutto_wrapper._resolve_yutto_output_path",
-                side_effect=RuntimeError("bad yutto shape"),
-            ),
-            patch(
-                "blsync.consumer.yutto_wrapper._original_yutto_process_download",
-                side_effect=fake_process_download,
-            ),
-        ):
-            await _record_yutto_process_download(
-                None,
-                None,
-                {"path": "episode"},
-                {},
-            )
-    finally:
-        _yutto_output_records.reset(output_records_token)
-
-    assert output_records == [
-        {"path": Path("episode"), "page_index": None, "page_cid": None, "page_name": None}
-    ]
-
-
-@pytest.mark.asyncio
-async def test_yutto_existing_output_file_skips_original_download(tmp_path):
-    video = tmp_path / "episode.mp4"
-    video.write_bytes(b"video")
-
-    output_records: list[object] = []
-    output_records_token = _yutto_output_records.set(output_records)
-    try:
-        with (
-            patch(
-                "blsync.consumer.yutto_wrapper._resolve_yutto_output_path",
-                return_value=video,
-            ),
-            patch(
-                "blsync.consumer.yutto_wrapper._original_yutto_process_download",
-            ) as original_process_download,
-        ):
-            result = await _record_yutto_process_download(
-                None,
-                None,
-                {"path": "episode"},
-                {"overwrite": False},
-            )
-    finally:
-        _yutto_output_records.reset(output_records_token)
-
-    assert result.name == "SKIP"
-    assert output_records == [
-        {"path": video, "page_index": None, "page_cid": None, "page_name": None}
-    ]
-    original_process_download.assert_not_called()
-
-
-def test_yutto_downloader_uses_captured_progress_function():
-    import yutto.downloader.downloader as yutto_downloader
-    import yutto.downloader.progressbar as yutto_progressbar
-
-    assert yutto_progressbar.show_progress is _capture_yutto_show_progress
-    assert yutto_downloader.show_progress is _capture_yutto_show_progress
-
-
-def test_yutto_uses_auth_cookie_argument(tmp_path):
-    args = _build_yutto_args(
-        YuttoDownloadOptions(
-            bvid="BV1",
-            download_path=tmp_path,
-            auth="SESSDATA=sess; bili_jct=jct",
-        )
-    )
-
-    assert "--auth" in args
-    assert "SESSDATA=sess; bili_jct=jct" in args
-    assert "--sessdata" not in args

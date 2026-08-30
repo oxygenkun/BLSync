@@ -2,11 +2,10 @@
 
 import enum
 import json
-import os
-import zoneinfo
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import (
     DateTime,
     Index,
@@ -28,37 +27,30 @@ from blsync.progress import (
     get_progress_broker,
 )
 
-# Get timezone from environment variable, default to UTC
-TZ_ENV = os.environ.get("TZ", "UTC")
-try:
-    TZ = zoneinfo.ZoneInfo(TZ_ENV)
-except Exception:
-    # Fallback to UTC if timezone is not available
-    TZ = timezone.utc
 
-
-def format_datetime(dt: datetime | None) -> str | None:
+def format_utc_datetime(dt: datetime | None) -> str | None:
     """
-    Format datetime to ISO string with timezone conversion.
+    Format datetime to a UTC ISO string for API responses.
 
-    Converts UTC datetime from database to local timezone specified by TZ env var.
+    Datetimes are stored in the database as naive UTC; this attaches the UTC
+    offset so clients (e.g. the browser frontend) can convert the instant to
+    their own local timezone.
 
     Args:
         dt: datetime object (assumed to be UTC if timezone-naive)
 
     Returns:
-        ISO formatted string in local timezone, or None if dt is None
+        UTC ISO string (e.g. ``2026-08-30T04:00:00+00:00``), or None if dt is None
     """
     if dt is None:
         return None
 
     # If datetime is timezone-naive, assume it's UTC
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
-    # Convert to target timezone
-    dt_local = dt.astimezone(TZ)
-    return dt_local.isoformat()
+    # Normalize to UTC so the emitted offset is always +00:00
+    return dt.astimezone(UTC).isoformat()
 
 
 class TaskType(str, enum.Enum):
@@ -82,8 +74,6 @@ class TaskStatus(str, enum.Enum):
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
-
-    pass
 
 
 class TaskModel(Base):
@@ -109,9 +99,13 @@ class TaskModel(Base):
     task_key: Mapped[str] = mapped_column(String(500))
     task_data: Mapped[str] = mapped_column(Text())
     status: Mapped[str] = mapped_column(String(20), default=TaskStatus.READY.value)
-    created_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(), default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(), default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
@@ -246,8 +240,8 @@ class TaskDAL:
                     cursor.execute("PRAGMA foreign_keys=ON;")
                     # Set busy timeout to 20 seconds
                     cursor.execute("PRAGMA busy_timeout=20000;")
-                except Exception:
-                    pass  # Ignore errors for non-SQLite databases
+                except Exception as exc:
+                    logger.debug(f"SQLite PRAGMA setup skipped: {exc}")
 
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
@@ -315,7 +309,7 @@ class TaskDAL:
             # Build update values
             values: dict[str, Any] = {"status": status.value}
             if status == TaskStatus.COMPLETED:
-                values["completed_at"] = datetime.now(timezone.utc)
+                values["completed_at"] = datetime.now(UTC)
                 values["error_message"] = None
             elif status == TaskStatus.FAILED:
                 values["error_message"] = error_message
@@ -426,7 +420,7 @@ class TaskDAL:
                     .values(
                         status=TaskStatus.CONSUMING.value,
                         worker_id=worker_id,
-                        lease_expires_at=datetime.utcnow()
+                        lease_expires_at=datetime.now(UTC)
                         + timedelta(seconds=lease_seconds),
                         error_message=None,
                     )
@@ -450,7 +444,7 @@ class TaskDAL:
                 update(TaskModel)
                 .where(TaskModel.id == task_id, TaskModel.worker_id == worker_id)
                 .values(
-                    lease_expires_at=datetime.utcnow()
+                    lease_expires_at=datetime.now(UTC)
                     + timedelta(seconds=lease_seconds)
                 )
                 .returning(TaskModel.control_action)
@@ -471,7 +465,7 @@ class TaskDAL:
         """Update a task only while the caller still owns its lease."""
         values: dict[str, Any] = {"status": status.value}
         if status == TaskStatus.COMPLETED:
-            values.update(completed_at=datetime.utcnow(), error_message=None)
+            values.update(completed_at=datetime.now(UTC), error_message=None)
         elif status == TaskStatus.FAILED:
             values["error_message"] = error_message
         if release:
@@ -561,7 +555,7 @@ class TaskDAL:
     async def recover_expired_tasks(self) -> int:
         """Recover tasks whose owning worker stopped renewing its lease."""
         async with self.async_session() as session:
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             pausing = await session.execute(
                 update(TaskModel)
                 .where(
@@ -704,10 +698,9 @@ class TaskDAL:
             result = await session.execute(query_sql, params)
             rows = result.all()
 
-            # Convert rows to dict and format datetimes with timezone conversion
+            # Parse string dates from SQLite (stored as naive UTC) and emit as UTC ISO
             items = []
             for row in rows:
-                # Parse string dates from SQLite and convert to target timezone
                 created_dt = datetime.fromisoformat(row[5]) if row[5] else None
                 updated_dt = datetime.fromisoformat(row[6]) if row[6] else None
                 completed_dt = datetime.fromisoformat(row[7]) if row[7] else None
@@ -719,9 +712,9 @@ class TaskDAL:
                         "task_key": row[2],
                         "task_data": row[3],
                         "status": row[4],
-                        "created_at": format_datetime(created_dt),
-                        "updated_at": format_datetime(updated_dt),
-                        "completed_at": format_datetime(completed_dt),
+                        "created_at": format_utc_datetime(created_dt),
+                        "updated_at": format_utc_datetime(updated_dt),
+                        "completed_at": format_utc_datetime(completed_dt),
                         "error_message": row[8],
                     }
                 )
@@ -734,16 +727,16 @@ class TaskDAL:
             }
 
     def _task_to_dict(self, task: TaskModel) -> dict:
-        """Convert TaskModel to dictionary with timezone conversion."""
+        """Convert TaskModel to a dict with timestamps emitted as UTC ISO."""
         return {
             "id": task.id,
             "task_type": task.task_type,
             "task_key": task.task_key,
             "task_data": task.task_data,
             "status": task.status,
-            "created_at": format_datetime(task.created_at),
-            "updated_at": format_datetime(task.updated_at),
-            "completed_at": format_datetime(task.completed_at),
+            "created_at": format_utc_datetime(task.created_at),
+            "updated_at": format_utc_datetime(task.updated_at),
+            "completed_at": format_utc_datetime(task.completed_at),
             "error_message": task.error_message,
         }
 

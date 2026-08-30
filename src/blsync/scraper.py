@@ -1,9 +1,9 @@
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from bilibili_api import Credential, favorite_list, video
 from loguru import logger
 
-from blsync.configs import Config
+from blsync.configuration.models import Config
 
 
 class BScraper:
@@ -20,9 +20,7 @@ class BScraper:
             ac_time_value=config.credential.ac_time_value,
         )
 
-    async def _get_bvids_from_favid(
-        self, favid: str
-    ) -> AsyncGenerator[str | None, None]:
+    async def _get_bvids_from_favid(self, favid: str) -> AsyncGenerator[str | None]:
         """
         获取收藏夹下面的所有视频bvid，如果有未下载的新视频会更新字典
 
@@ -41,7 +39,7 @@ class BScraper:
             logger.exception(e)
             yield None
 
-    async def get_all_bvids(self) -> AsyncGenerator[tuple[str, str], None]:
+    async def get_all_bvids(self) -> AsyncGenerator[tuple[str, str]]:
         for task_name, config in self.config.favorite_list.items():
             if task_name == "-1" or config.fid == "-1":
                 continue

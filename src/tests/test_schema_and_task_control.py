@@ -1,14 +1,14 @@
 """Database migration, lease, and persisted task-control tests."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
 
+from blsync.db.task import BiliVideoTaskDAL, TaskStatus
 from blsync.migrations import LATEST_SCHEMA_VERSION
-from blsync.model.task import BiliVideoTaskDAL, TaskStatus
 from blsync.schema import SchemaMigrationError
 
 
@@ -20,9 +20,7 @@ async def test_fresh_database_migrates_idempotently(tmp_path):
         assert await dal.migrate() == LATEST_SCHEMA_VERSION
         async with dal.async_session() as session:
             version = await session.scalar(text("SELECT version FROM schema_version"))
-            columns = (
-                await session.execute(text("PRAGMA table_info(tasks)"))
-            ).all()
+            columns = (await session.execute(text("PRAGMA table_info(tasks)"))).all()
         assert version == LATEST_SCHEMA_VERSION
         assert {row[1] for row in columns} >= {
             "control_action",
@@ -98,7 +96,7 @@ async def test_concurrent_startup_migration_is_serialized(tmp_path):
 
 @pytest.mark.asyncio
 async def test_failed_migration_rolls_back_version(tmp_path, monkeypatch):
-    import blsync.schema as schema
+    from blsync import schema
 
     dal = BiliVideoTaskDAL(f"sqlite+aiosqlite:///{tmp_path / 'rollback.sqlite3'}")
     try:
@@ -111,9 +109,7 @@ async def test_failed_migration_rolls_back_version(tmp_path, monkeypatch):
             ),
         )
         monkeypatch.setattr(schema, "MIGRATIONS", (*schema.MIGRATIONS, broken))
-        monkeypatch.setattr(
-            schema, "LATEST_SCHEMA_VERSION", LATEST_SCHEMA_VERSION + 1
-        )
+        monkeypatch.setattr(schema, "LATEST_SCHEMA_VERSION", LATEST_SCHEMA_VERSION + 1)
         with pytest.raises(Exception, match="syntax error"):
             await dal.migrate()
         async with dal.async_session() as session:
@@ -155,9 +151,7 @@ async def test_pause_transition_and_resume_wait_for_owner(tmp_path):
         await dal.migrate()
         task = await dal.create_bili_video_task("BV2", "fav", {})
         await dal.claim_ready_tasks("worker", 1, 30)
-        await dal.update_owned_task_status(
-            task.id, "worker", TaskStatus.DOWNLOADING
-        )
+        await dal.update_owned_task_status(task.id, "worker", TaskStatus.DOWNLOADING)
         pausing = await dal.request_task_pause(task.id)
         assert pausing is not None and pausing.status == TaskStatus.PAUSING.value
         assert await dal.resume_paused_task(task.id) is None
@@ -181,7 +175,7 @@ async def test_expired_lease_is_recovered(tmp_path):
         async with dal.async_session() as session:
             await session.execute(
                 text("UPDATE tasks SET lease_expires_at = :expired WHERE id = :id"),
-                {"expired": datetime.utcnow() - timedelta(seconds=1), "id": task.id},
+                {"expired": datetime.now(UTC) - timedelta(seconds=1), "id": task.id},
             )
             await session.commit()
         assert await dal.recover_expired_tasks() == 1

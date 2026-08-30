@@ -65,11 +65,10 @@ class TaskProgressBroker:
                 yield await queue.get()
         finally:
             subscribers = self._subscribers.get(task_id)
-            if subscribers is None:
-                return
-            subscribers.discard(queue)
-            if not subscribers:
-                self._subscribers.pop(task_id, None)
+            if subscribers is not None:
+                subscribers.discard(queue)
+                if not subscribers:
+                    self._subscribers.pop(task_id, None)
 
     async def subscribe_all(self) -> AsyncIterator[DownloadProgressEvent]:
         queue: asyncio.Queue[DownloadProgressEvent] = asyncio.Queue()

@@ -8,38 +8,34 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
-from blsync import get_global_configs
-from blsync.api import api_router, file_router, frontend_router
+from blsync.configuration.store import get_config
 from blsync.consumer.base import Task
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
-from blsync.database import get_semaphore, get_task_dal
-from blsync.model.task import (
-    TaskStatus,
-    make_bili_video_key,
-    parse_bili_video_key,
-)
+from blsync.db import get_task_dal
+from blsync.db.task import TaskStatus, parse_bili_video_key
 from blsync.progress import (
     DownloadProgressEvent,
     ProgressEventType,
     get_progress_broker,
 )
-from blsync.scraper import BScraper
+from blsync.routes import api_router, file_router, frontend_router
+from blsync.services.favorite_scanner import scan_favorites_once
 
-_scan_lock = asyncio.Lock()
-WORKER_ID = os.environ.get("WORKER_ID", os.environ.get("HOSTNAME", socket.gethostname()))
+WORKER_ID = os.environ.get(
+    "WORKER_ID", os.environ.get("HOSTNAME", socket.gethostname())
+)
 CONTROL_POLL_SECONDS = 1.0
 LEASE_SECONDS = 30.0
+# 前端 SSE 长连接在 Ctrl+C 时不会主动断开；uvicorn 默认无限等待连接关闭，
+# 导致进程卡在 "Waiting for connections to close."，需要设置一个有限的宽限期。
+GRACEFUL_SHUTDOWN_SECONDS = 5.0
 
 
 def setup_logger():
     """配置 logger，从配置文件读取日志级别"""
-    config = get_global_configs()
+    config = get_config()
     logger.remove()
     logger.add(sys.stderr, level=config.log_level)
-
-
-def get_scraper():
-    return BScraper(get_global_configs())
 
 
 async def _monitor_task_control(
@@ -67,104 +63,98 @@ async def process_single_task(task: Task, task_key_str: str):
         task: Task instance to execute
         task_key_str: Task key JSON string for database updates
     """
-    config = get_global_configs()
+    config = get_config()
     task_dal = get_task_dal()
     bvid, favid = parse_bili_video_key(task_key_str)
     task_id = task._task_context.task_id if isinstance(task, BiliVideoTask) else None
     if task_id is None:
         raise ValueError("A persisted task id is required for DB-controlled execution")
 
-    async with get_semaphore():  # 限制并发数
-        execution: asyncio.Task[None] | None = None
-        monitor: asyncio.Task[None] | None = None
-        pause_detected = asyncio.Event()
-        try:
-            action = await task_dal.renew_lease(task_id, WORKER_ID, LEASE_SECONDS)
-            if action != "run":
-                await task_dal.update_owned_task_status(
-                    task_id, WORKER_ID, TaskStatus.PAUSED, release=True
-                )
-                return
-
-            owned = await task_dal.update_owned_task_status(
-                task_id, WORKER_ID, TaskStatus.DOWNLOADING
-            )
-            if owned is None:
-                return
-            if (
-                isinstance(task, BiliVideoTask)
-                and task._task_context.task_id is not None
-            ):
-                get_progress_broker().publish(
-                    task._task_context.task_id,
-                    DownloadProgressEvent(
-                        event=ProgressEventType.STATUS,
-                        task_id=task._task_context.task_id,
-                        bvid=bvid,
-                        status=TaskStatus.DOWNLOADING.value,
-                    ),
-                )
-
-            # 添加超时控制
-            execution = asyncio.create_task(task.execute())
-            monitor = asyncio.create_task(
-                _monitor_task_control(task_id, execution, pause_detected)
-            )
-            await asyncio.wait_for(execution, timeout=config.task_timeout)
-            if isinstance(task, BiliVideoTask):
-                await task_dal.update_owned_task_downloaded_files(
-                    task_id,
-                    WORKER_ID,
-                    [str(path) for path in task.downloaded_files],
-                )
-            logger.info(f"Task {(bvid, favid)} completed successfully")
-
-            # Update status to done
+    # task_consumer tracks running_tasks and applies the live concurrency limit.
+    execution: asyncio.Task[None] | None = None
+    monitor: asyncio.Task[None] | None = None
+    pause_detected = asyncio.Event()
+    try:
+        action = await task_dal.renew_lease(task_id, WORKER_ID, LEASE_SECONDS)
+        if action != "run":
             await task_dal.update_owned_task_status(
-                task_id, WORKER_ID, TaskStatus.COMPLETED, release=True
+                task_id, WORKER_ID, TaskStatus.PAUSED, release=True
+            )
+            return
+
+        owned = await task_dal.update_owned_task_status(
+            task_id, WORKER_ID, TaskStatus.DOWNLOADING
+        )
+        if owned is None:
+            return
+        if isinstance(task, BiliVideoTask) and task._task_context.task_id is not None:
+            get_progress_broker().publish(
+                task._task_context.task_id,
+                DownloadProgressEvent(
+                    event=ProgressEventType.STATUS,
+                    task_id=task._task_context.task_id,
+                    bvid=bvid,
+                    status=TaskStatus.DOWNLOADING.value,
+                ),
             )
 
-        except asyncio.CancelledError:
-            if pause_detected.is_set():
-                logger.info(f"Task {(bvid, favid)} paused by user request")
-                await task_dal.update_owned_task_status(
-                    task_id, WORKER_ID, TaskStatus.PAUSED, release=True
-                )
-                return
-            if execution is not None:
-                execution.cancel()
-            raise
-        except asyncio.TimeoutError:
-            error_msg = f"Task {(bvid, favid)} timed out after {config.task_timeout}s"
-            logger.exception(error_msg)
-            await task_dal.update_owned_task_status(
-                task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
+        # 添加超时控制
+        execution = asyncio.create_task(task.execute())
+        monitor = asyncio.create_task(
+            _monitor_task_control(task_id, execution, pause_detected)
+        )
+        await asyncio.wait_for(execution, timeout=config.task_timeout)
+        if isinstance(task, BiliVideoTask):
+            await task_dal.update_owned_task_downloaded_files(
+                task_id,
+                WORKER_ID,
+                [str(path) for path in task.downloaded_files],
             )
-        except Exception as e:
-            error_msg = f"Error processing task {(bvid, favid)}: {e}"
-            logger.exception(error_msg)
+        logger.info(f"Task {(bvid, favid)} completed successfully")
+
+        # Update status to done
+        await task_dal.update_owned_task_status(
+            task_id, WORKER_ID, TaskStatus.COMPLETED, release=True
+        )
+
+    except asyncio.CancelledError:
+        if pause_detected.is_set():
+            logger.info(f"Task {(bvid, favid)} paused by user request")
             await task_dal.update_owned_task_status(
-                task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
+                task_id, WORKER_ID, TaskStatus.PAUSED, release=True
             )
-            if (
-                isinstance(task, BiliVideoTask)
-                and task._task_context.task_id is not None
-            ):
-                get_progress_broker().publish(
-                    task._task_context.task_id,
-                    DownloadProgressEvent(
-                        event=ProgressEventType.FAILED,
-                        task_id=task._task_context.task_id,
-                        bvid=bvid,
-                        status=TaskStatus.FAILED.value,
-                        message=error_msg,
-                    ),
-                )
-        finally:
-            if monitor is not None:
-                monitor.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await monitor
+            return
+        if execution is not None:
+            execution.cancel()
+        raise
+    except TimeoutError:
+        error_msg = f"Task {(bvid, favid)} timed out after {config.task_timeout}s"
+        logger.exception(error_msg)
+        await task_dal.update_owned_task_status(
+            task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
+        )
+    except Exception as e:
+        error_msg = f"Error processing task {(bvid, favid)}: {e}"
+        logger.exception(error_msg)
+        await task_dal.update_owned_task_status(
+            task_id, WORKER_ID, TaskStatus.FAILED, error_msg, release=True
+        )
+        if isinstance(task, BiliVideoTask) and task._task_context.task_id is not None:
+            get_progress_broker().publish(
+                task._task_context.task_id,
+                DownloadProgressEvent(
+                    event=ProgressEventType.FAILED,
+                    task_id=task._task_context.task_id,
+                    bvid=bvid,
+                    status=TaskStatus.FAILED.value,
+                    message=error_msg,
+                ),
+            )
+    finally:
+        if monitor is not None:
+            monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await monitor
 
 
 async def task_consumer():
@@ -179,11 +169,13 @@ async def task_consumer():
     - failed: 执行失败
     """
     task_dal = get_task_dal()
-    config = get_global_configs()
     running_tasks: set[asyncio.Task[None]] = set()
 
     while True:
         try:
+            # TODO(config-observer): subscribe to config_store.on_change(
+            # "max_concurrent_tasks") instead of polling every loop iteration.
+            config = get_config()
             available_slots = config.max_concurrent_tasks - len(running_tasks)
             if available_slots <= 0:
                 await asyncio.sleep(0.2)
@@ -259,9 +251,11 @@ async def task_producer():
        - FAILED：默认跳过；仅在 retry_failed_tasks 开启时更新为 READY
     """
     logger.info("[task_producer] Starting task producer")
-    config = get_global_configs()
     while True:
         try:
+            # TODO(config-observer): subscribe to config_store.on_change(
+            # "interval") instead of polling every loop iteration.
+            config = get_config()
             await scan_favorites_once()
 
             logger.debug(f"[task_producer] Sleeping for {config.interval} seconds")
@@ -270,59 +264,6 @@ async def task_producer():
         except Exception as e:
             logger.error(f"Error in task_producer: {e}")
             await asyncio.sleep(config.interval)
-
-
-async def scan_favorites_once() -> dict[str, int]:
-    """Scan configured favorites once and enqueue missing or failed tasks."""
-    async with _scan_lock:
-        config = get_global_configs()
-        bs = get_scraper()
-        task_dal = get_task_dal()
-        stats = {"created": 0, "reset": 0, "skipped": 0}
-
-        async for bvid, task_name in bs.get_all_bvids():
-            context = BiliVideoTaskContext(bid=bvid, task_name=task_name)
-            status = await task_dal.get_bili_video_task_status(bvid, task_name)
-
-            if status is None:
-                await task_dal.create_bili_video_task(
-                    bvid=bvid,
-                    favid=task_name,
-                    task_context=context.model_dump(),
-                )
-                stats["created"] += 1
-                logger.info(f"[task_producer] Added new task {bvid} for {task_name}")
-            elif status == TaskStatus.FAILED:
-                if config.retry_failed_tasks:
-                    task_key = make_bili_video_key(bvid, task_name)
-                    await task_dal.update_task_status(task_key, TaskStatus.READY)
-                    stats["reset"] += 1
-                    logger.info(
-                        f"[task_producer] Reset failed task {bvid} "
-                        f"for {task_name} to READY"
-                    )
-                else:
-                    stats["skipped"] += 1
-                    logger.debug(
-                        f"[task_producer] Failed task {bvid} requires manual retry"
-                    )
-            elif status in (
-                TaskStatus.READY,
-                TaskStatus.CONSUMING,
-                TaskStatus.DOWNLOADING,
-                TaskStatus.PAUSING,
-                TaskStatus.PAUSED,
-                TaskStatus.COMPLETED,
-            ):
-                stats["skipped"] += 1
-                logger.debug(
-                    f"[task_producer] Task {bvid} (task_name: {task_name}) "
-                    f"is {status.value}, skipping"
-                )
-            else:
-                logger.warning(f"[task_producer] Unknown task status: {status}")
-
-        return stats
 
 
 async def delete_stale_tasks():
@@ -340,7 +281,7 @@ async def delete_stale_tasks():
             await asyncio.sleep(300)  # 每5分钟检查一次
 
             # NOTE: delete_stale_tasks is disabled - using completed task status instead
-            # config = get_global_configs()
+            # config = get_config()
             # task_dal = get_task_dal()
             # for favid in config.favorite_list.keys():
             #     downloaded_bvids = await task_dal.get_completed_bvids(favid)
@@ -408,10 +349,10 @@ def main():
     setup_logger()
 
     uvicorn.run(
-        "blsync.main:app",
-        host="0.0.0.0",
-        port=8000,
-        # reload=True,
+        app,
+        host=os.environ.get("BLSYNC_HOST", "0.0.0.0"),
+        port=int(os.environ.get("BLSYNC_PORT", "8000")),
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
 
 

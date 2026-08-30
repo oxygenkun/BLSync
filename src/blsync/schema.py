@@ -1,6 +1,6 @@
 """SQLite schema version management and startup migrations."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -44,7 +44,7 @@ async def migrate_database(engine: AsyncEngine) -> int:
                 baseline = 1 if "tasks" in tables else 0
                 await conn.exec_driver_sql(
                     "INSERT INTO schema_version (id, version, updated_at) VALUES (1, ?, ?)",
-                    (baseline, datetime.now(timezone.utc).isoformat()),
+                    (baseline, datetime.now(UTC).isoformat()),
                 )
 
             result = await conn.exec_driver_sql(
@@ -52,7 +52,9 @@ async def migrate_database(engine: AsyncEngine) -> int:
             )
             current = result.scalar_one_or_none()
             if current is None:
-                raise SchemaMigrationError("schema_version must contain the singleton row")
+                raise SchemaMigrationError(
+                    "schema_version must contain the singleton row"
+                )
             if current > LATEST_SCHEMA_VERSION:
                 raise SchemaMigrationError(
                     f"Database schema version {current} is newer than supported "
@@ -64,7 +66,7 @@ async def migrate_database(engine: AsyncEngine) -> int:
                     await conn.exec_driver_sql(statement)
                 await conn.exec_driver_sql(
                     "UPDATE schema_version SET version = ?, updated_at = ? WHERE id = 1",
-                    (migration.VERSION, datetime.now(timezone.utc).isoformat()),
+                    (migration.VERSION, datetime.now(UTC).isoformat()),
                 )
                 current = migration.VERSION
 
