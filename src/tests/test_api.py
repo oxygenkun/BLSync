@@ -866,6 +866,43 @@ class TestUpdateTaskStatus:
 
         assert response.status_code == 422  # Validation error
 
+    def test_update_completed_task_to_ready_resets_state(self, test_client, test_dal):
+        """已完成任务重置为 ready（重试）时应清理完成状态并可被重新领取。"""
+        task = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+        asyncio.run(test_dal.update_task_status(task.task_key, TaskStatus.COMPLETED))
+
+        response = test_client.put(
+            f"/api/tasks/{task.id}/status", json={"status": "ready"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
+        assert data["completed_at"] is None
+        assert data["error_message"] is None
+
+        # 能被 consumer 重新领取
+        claimed = asyncio.run(test_dal.claim_ready_tasks("worker-test", 10, 30))
+        assert [t.id for t in claimed] == [task.id]
+
+    def test_update_failed_task_to_ready_clears_error(self, test_client, test_dal):
+        """失败任务重置为 ready 时应清除 error_message。"""
+        task = asyncio.run(test_dal.create_bili_video_task("BV2", "fav1", {}))
+        asyncio.run(
+            test_dal.update_task_status(
+                task.task_key, TaskStatus.FAILED, error_message="boom"
+            )
+        )
+
+        response = test_client.put(
+            f"/api/tasks/{task.id}/status", json={"status": "ready"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
+        assert data["error_message"] is None
+
 
 class TestBatchUpdateTaskStatus:
     """Tests for PUT /api/tasks/status endpoint."""
@@ -904,6 +941,27 @@ class TestBatchUpdateTaskStatus:
         assert len(data["failed"]) == 1
         assert data["failed"][0]["task_id"] == 99999
         assert "not found" in data["failed"][0]["detail"].lower()
+
+    def test_batch_update_completed_to_ready_resets_state(self, test_client, test_dal):
+        """批量把已完成任务重置为 ready 时应清理完成状态并可被重新领取。"""
+        task = asyncio.run(test_dal.create_bili_video_task("BV1", "fav1", {}))
+        asyncio.run(test_dal.update_task_status(task.task_key, TaskStatus.COMPLETED))
+
+        response = test_client.put(
+            "/api/tasks/status",
+            json={"task_ids": [task.id], "status": "ready"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["succeeded"] == [task.id]
+
+        detail = test_client.get(f"/api/tasks/{task.id}").json()
+        assert detail["status"] == "ready"
+        assert detail["completed_at"] is None
+        assert detail["error_message"] is None
+
+        claimed = asyncio.run(test_dal.claim_ready_tasks("worker-test", 10, 30))
+        assert [t.id for t in claimed] == [task.id]
 
     def test_batch_update_status_to_failed_requires_error_message(self, test_client):
         """Test batch update to failed without error_message should fail."""

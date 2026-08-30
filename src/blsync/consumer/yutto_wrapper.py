@@ -75,6 +75,7 @@ _yutto_stall_timeout: contextvars.ContextVar[float] = contextvars.ContextVar(
 )
 
 _original_yutto_process_download = yutto_download_manager.process_download
+_original_yutto_ffmpeg_class = yutto_downloader.FFmpeg
 _original_yutto_logger_info = YuttoLogger.info
 _original_yutto_logger_custom = YuttoLogger.custom
 _original_yutto_logger_new_line = YuttoLogger.new_line
@@ -129,6 +130,34 @@ class YuttoDownloadStalledError(Exception):
 
 class YuttoDownloadCancelledError(Exception):
     """The owning BLSync task requested cooperative downloader shutdown."""
+
+
+class YuttoMergeFailedError(Exception):
+    """ffmpeg failed while merging downloaded media; the output is unusable."""
+
+
+class _RaisingFFmpegProxy:
+    """FFmpeg 代理：把合并命令的非零退出码转为异常。
+
+    yutto 的 merge_video_and_audio 在 ffmpeg 失败时仅打印日志便正常返回，
+    上层会把截断损坏的输出当作下载成功。这里在 exec 层抛出异常，让失败沿
+    调用链传播，任务状态才能被正确标记为 failed。
+    """
+
+    def __init__(self) -> None:
+        self._ffmpeg = _original_yutto_ffmpeg_class()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ffmpeg, name)
+
+    def exec(self, args: list[str]):
+        result = self._ffmpeg.exec(args)
+        if result.returncode != 0:
+            stderr_tail = result.stderr.decode(errors="replace")[-2000:].strip()
+            raise YuttoMergeFailedError(
+                f"ffmpeg exited with code {result.returncode}: {stderr_tail}"
+            )
+        return result
 
 
 async def download_video(
@@ -376,6 +405,7 @@ def _install_yutto_patches() -> None:
     YuttoLogger.new_line = classmethod(_filtered_yutto_logger_new_line)
     yutto_progressbar.show_progress = _capture_yutto_show_progress
     yutto_downloader.show_progress = _capture_yutto_show_progress
+    yutto_downloader.FFmpeg = _RaisingFFmpegProxy
 
 
 async def _extract_ugc_video_data_with_page_info(
@@ -452,7 +482,20 @@ async def _record_yutto_process_download(ctx, client, episode_data, options):
         logger.info(f"Yutto output file already exists, skip download: {output_path}")
         _yutto_completed_episode_progress.set(float(_yutto_episode_index.get() or 1))
         return yutto_downloader.DownloadState.SKIP
-    result = await _original_yutto_process_download(ctx, client, episode_data, options)
+    try:
+        result = await _original_yutto_process_download(
+            ctx, client, episode_data, options
+        )
+    except YuttoMergeFailedError:
+        # 合并失败的输出是截断残骸，删除以免重试时因“文件已存在”被跳过；
+        # m4s 临时文件保留，重试可断点续传并重新合并
+        if output_path is not None:
+            logger.warning(
+                f"Removing truncated output after merge failure: {output_path}"
+            )
+            with suppress(OSError):
+                output_path.unlink(missing_ok=True)
+        raise
     _yutto_completed_episode_progress.set(float(_yutto_episode_index.get() or 1))
     return result
 

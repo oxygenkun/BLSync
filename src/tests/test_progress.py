@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -6,8 +7,10 @@ import pytest
 from blsync.consumer.bilibili import BiliVideoTask, BiliVideoTaskContext
 from blsync.consumer.yutto_wrapper import (
     YuttoDownloadOptions,
+    YuttoMergeFailedError,
     _build_yutto_args,
     _capture_yutto_show_progress,
+    _RaisingFFmpegProxy,
     _record_yutto_process_download,
     _resolve_yutto_output_path,
     _yutto_output_records,
@@ -296,6 +299,109 @@ def test_yutto_downloader_uses_captured_progress_function():
 
     assert yutto_progressbar.show_progress is _capture_yutto_show_progress
     assert yutto_downloader.show_progress is _capture_yutto_show_progress
+
+
+def test_yutto_downloader_uses_raising_ffmpeg_proxy():
+    import yutto.downloader.downloader as yutto_downloader
+
+    assert yutto_downloader.FFmpeg is _RaisingFFmpegProxy
+
+
+def _fake_completed_process(returncode: int, stderr: bytes = b""):
+    return SimpleNamespace(returncode=returncode, stderr=stderr)
+
+
+def test_raising_ffmpeg_proxy_raises_on_nonzero_exit():
+    inner = SimpleNamespace(
+        exec=lambda _args: _fake_completed_process(
+            1, b"Error closing file: No space left on device\nConversion failed!"
+        ),
+        path="/usr/bin/ffmpeg",
+    )
+
+    with patch(
+        "blsync.consumer.yutto_wrapper._original_yutto_ffmpeg_class",
+        return_value=inner,
+    ):
+        proxy = _RaisingFFmpegProxy()
+        with pytest.raises(YuttoMergeFailedError, match="No space left on device"):
+            proxy.exec(["-y", "out.mp4"])
+
+
+def test_raising_ffmpeg_proxy_passes_through_success():
+    success = _fake_completed_process(0, b"ok")
+    inner = SimpleNamespace(exec=lambda _args: success, path="/usr/bin/ffmpeg")
+
+    with patch(
+        "blsync.consumer.yutto_wrapper._original_yutto_ffmpeg_class",
+        return_value=inner,
+    ):
+        proxy = _RaisingFFmpegProxy()
+        assert proxy.exec(["-version"]) is success
+        # 非 exec 属性透传到内部实例
+        assert proxy.path == "/usr/bin/ffmpeg"
+
+
+@pytest.mark.asyncio
+async def test_merge_failure_removes_truncated_output_and_reraises(tmp_path):
+    truncated = tmp_path / "episode.mp4"
+    truncated.write_bytes(b"partial")
+
+    async def fake_process_download(_ctx, _client, _episode_data, _options):
+        raise YuttoMergeFailedError("ffmpeg exited with code 1")
+
+    output_records: list[object] = []
+    output_records_token = _yutto_output_records.set(output_records)
+    try:
+        with (
+            patch(
+                "blsync.consumer.yutto_wrapper._resolve_yutto_output_path",
+                return_value=truncated,
+            ),
+            patch(
+                "blsync.consumer.yutto_wrapper._original_yutto_process_download",
+                side_effect=fake_process_download,
+            ),
+        ):
+            with pytest.raises(YuttoMergeFailedError):
+                await _record_yutto_process_download(
+                    None,
+                    None,
+                    {"path": "episode"},
+                    {"overwrite": True},
+                )
+    finally:
+        _yutto_output_records.reset(output_records_token)
+
+    # 截断残骸被删除，避免重试时因“文件已存在”被跳过
+    assert not truncated.exists()
+
+
+@pytest.mark.asyncio
+async def test_iter_download_video_progress_emits_failed_on_merge_error(tmp_path):
+    async def fake_run(_args, _verbose, _callback, _bvid):
+        raise YuttoMergeFailedError(
+            "ffmpeg exited with code 1: Error closing file: No space left on device"
+        )
+
+    with patch(
+        "blsync.consumer.yutto_wrapper._run_yutto_download_in_thread",
+        side_effect=fake_run,
+    ):
+        events = [
+            event
+            async for event in iter_download_video_progress(
+                bvid="BV1",
+                download_path=tmp_path,
+            )
+        ]
+
+    assert [event.event for event in events] == [
+        ProgressEventType.STATUS,
+        ProgressEventType.FAILED,
+    ]
+    assert events[-1].status == "failed"
+    assert "No space left on device" in (events[-1].message or "")
 
 
 def test_yutto_uses_auth_cookie_argument(tmp_path):

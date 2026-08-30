@@ -375,6 +375,15 @@ async def update_task_status(task_id: int, request: UpdateTaskStatusRequest):
             session.add(task)
             task.status = new_status.value
 
+        if new_status == TaskStatus.READY:
+            # 重置为 ready（重试）时清理完成/失败残留并释放租约，
+            # 使 consumer 能重新领取该任务
+            task.completed_at = None
+            task.error_message = None
+            task.worker_id = None
+            task.lease_expires_at = None
+            task.control_action = "run"
+
         await session.commit()
         await session.refresh(task)
         task_dal._publish_status_event(task, new_status, request.error_message)
@@ -431,6 +440,12 @@ async def batch_update_task_status(request: BatchUpdateTaskStatusRequest):
             elif new_status == TaskStatus.COMPLETED:
                 task.completed_at = task.updated_at
                 task.error_message = None
+            elif new_status == TaskStatus.READY:
+                task.completed_at = None
+                task.error_message = None
+                task.worker_id = None
+                task.lease_expires_at = None
+                task.control_action = "run"
 
         await session.commit()
 
