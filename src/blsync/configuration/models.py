@@ -21,9 +21,6 @@ EDITABLE_FIELDS = frozenset(
         "request_timeout",
         "max_concurrent_tasks",
         "task_timeout",
-        "download_retry_limit",
-        "download_stall_timeout",
-        "download_url_refresh_retries",
         "retry_failed_tasks",
         "log_level",
         "credential",
@@ -149,9 +146,6 @@ class Config(BaseModel):
     request_timeout: int = Field(ge=1)
     max_concurrent_tasks: int = Field(default=3, ge=1, le=64)
     task_timeout: int = Field(default=300, ge=1)
-    download_retry_limit: int = Field(default=10, ge=0, le=100)
-    download_stall_timeout: float = Field(default=120.0, gt=0)
-    download_url_refresh_retries: int = Field(default=2, ge=0, le=20)
     retry_failed_tasks: bool = False
     credential: ConfigCredential
     favorite_list: dict[str, FavoriteListConfig] = Field(

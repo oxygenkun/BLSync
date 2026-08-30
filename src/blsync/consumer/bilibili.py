@@ -176,9 +176,6 @@ class BiliVideoTask(Task):
             name_template=name_template,
             verbose=self._config.verbose,
             selected_episodes=self._task_context.selected_episodes,
-            retry_limit=self._config.download_retry_limit,
-            stall_timeout=self._config.download_stall_timeout,
-            url_refresh_retries=self._config.download_url_refresh_retries,
         ):
             if event.downloaded_files is not None:
                 downloaded_paths = [

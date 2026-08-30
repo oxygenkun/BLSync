@@ -10,7 +10,7 @@ import asyncio
 import pathlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from loguru import logger
 from yutto.auth import AuthInfo, parse_auth_inline
@@ -36,14 +36,10 @@ class YuttoDownloadOptions:
     bvid: str
     download_path: pathlib.Path
     auth: str | None = None
-    extra_list_options: list[str] = field(default_factory=list)
     is_batch: bool = False
     name_template: str | None = None
     verbose: bool = False
     selected_episodes: list[int] | None = None
-    retry_limit: int = 10
-    stall_timeout: float = 120.0
-    url_refresh_retries: int = 2
 
     @property
     def video_url(self) -> str:
@@ -146,7 +142,6 @@ async def download_video(
     bvid: str,
     download_path: pathlib.Path,
     auth: str | None = None,
-    extra_list_options: list[str] | None = None,
     is_batch: bool = False,
     name_template: str | None = None,
     verbose: bool = False,
@@ -157,7 +152,6 @@ async def download_video(
         bvid=bvid,
         download_path=download_path,
         auth=auth,
-        extra_list_options=extra_list_options,
         is_batch=is_batch,
         name_template=name_template,
         verbose=verbose,
@@ -172,35 +166,21 @@ async def iter_download_video_progress(
     bvid: str,
     download_path: pathlib.Path,
     auth: str | None = None,
-    extra_list_options: list[str] | None = None,
     is_batch: bool = False,
     name_template: str | None = None,
     verbose: bool = False,
     selected_episodes: list[int] | None = None,
-    retry_limit: int = 10,
-    stall_timeout: float = 120.0,
-    url_refresh_retries: int = 2,
 ) -> AsyncIterator[DownloadProgressEvent]:
     """Yield BLSync progress events from yutto 2.3.1's structured API."""
     options = YuttoDownloadOptions(
         bvid=bvid,
         download_path=download_path,
         auth=auth,
-        extra_list_options=extra_list_options or [],
         is_batch=is_batch,
         name_template=name_template,
         verbose=verbose,
         selected_episodes=selected_episodes,
-        retry_limit=retry_limit,
-        stall_timeout=stall_timeout,
-        url_refresh_retries=url_refresh_retries,
     )
-    if options.extra_list_options:
-        raise ValueError(
-            "extra_list_options is not supported by the yutto 2.3 Core API; "
-            "use structured BLSync options instead"
-        )
-
     request = _build_yutto_request(options)
     queue: asyncio.Queue[DownloadProgressEvent | None] = asyncio.Queue()
 
