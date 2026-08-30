@@ -1,0 +1,174 @@
+name: Windows Desktop Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+      - "dev-desktop"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-desktop.yml"
+      - "desktop/**"
+      - "frontend"
+      - "frontend/**"
+      - "src/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build Windows x64 packages
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Download FFmpeg build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assetName = "ffmpeg-master-latest-win64-lgpl.zip"
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" `
+            -Headers $headers
+          $asset = $release.assets | Where-Object name -EQ $assetName | Select-Object -First 1
+          if (-not $asset) {
+            throw "FFmpeg release asset was not found: $assetName"
+          }
+          if ($asset.digest -notmatch '^sha256:([0-9a-fA-F]{64})$') {
+            throw "FFmpeg release asset has no valid SHA-256 digest"
+          }
+
+          $expectedHash = $Matches[1]
+          $archive = Join-Path $env:RUNNER_TEMP $assetName
+          curl.exe --fail --location --retry 3 `
+            --output $archive `
+            $asset.browser_download_url
+          if ($LASTEXITCODE -ne 0) {
+            throw "FFmpeg download failed with exit code $LASTEXITCODE"
+          }
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "FFmpeg SHA-256 mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          $extractDir = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractDir -Force
+          $ffmpeg = Get-ChildItem $extractDir -Recurse -File -Filter "ffmpeg.exe" |
+            Where-Object { $_.Directory.Name -eq "bin" } |
+            Select-Object -First 1
+          if (-not $ffmpeg) {
+            throw "Downloaded FFmpeg archive does not contain bin/ffmpeg.exe"
+          }
+          & $ffmpeg.FullName -version
+          $ffmpegExitCode = $LASTEXITCODE
+          if ($ffmpegExitCode -ne 0) {
+            throw "FFmpeg validation failed with exit code $ffmpegExitCode"
+          }
+          "BLSYNC_FFMPEG_PATH=$($ffmpeg.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build desktop application
+        shell: pwsh
+        run: ./desktop/build.ps1
+
+      - name: Package installer and portable edition
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $releaseDir = Resolve-Path desktop/src-tauri/target/release
+          $stagingDir = New-Item -ItemType Directory -Force artifacts
+          $portableDir = New-Item -ItemType Directory -Force (Join-Path $stagingDir "BLSync-$version-windows-x64-portable")
+
+          $app = Get-ChildItem $releaseDir -File -Filter "*.exe" |
+            Where-Object Name -NotIn @("blsync-backend.exe", "ffmpeg.exe") |
+            Select-Object -First 1
+          if (-not $app) {
+            throw "Unable to find the desktop application executable in $releaseDir"
+          }
+
+          Copy-Item $app.FullName (Join-Path $portableDir "BLSync.exe")
+          Copy-Item (Join-Path $releaseDir "blsync-backend.exe") $portableDir
+          Copy-Item (Join-Path $releaseDir "ffmpeg.exe") $portableDir
+
+          foreach ($requiredFile in @("BLSync.exe", "blsync-backend.exe", "ffmpeg.exe")) {
+            $path = Join-Path $portableDir $requiredFile
+            if (-not (Test-Path $path -PathType Leaf) -or (Get-Item $path).Length -lt 1MB) {
+              throw "Portable package dependency is missing or invalid: $path"
+            }
+          }
+
+          $portableArchive = Join-Path $stagingDir "BLSync-$version-windows-x64-portable.zip"
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $portableArchive
+
+          $installer = Get-ChildItem (Join-Path $releaseDir "bundle/nsis") -File -Filter "*.exe" |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "Unable to find the NSIS installer"
+          }
+          $installerOutput = Join-Path $stagingDir "BLSync-$version-windows-x64-setup.exe"
+          Copy-Item $installer.FullName $installerOutput
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "installer=$installerOutput" >> $env:GITHUB_OUTPUT
+          "portable=$portableArchive" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLSync-${{ steps.package.outputs.version }}-windows-x64-setup
+          path: ${{ steps.package.outputs.installer }}
+          if-no-files-found: error
+
+      - name: Upload Windows portable edition
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLSync-${{ steps.package.outputs.version }}-windows-x64-portable
+          path: ${{ steps.package.outputs.portable }}
+          if-no-files-found: error
