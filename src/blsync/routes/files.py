@@ -1,6 +1,9 @@
 """Routes for listing and serving files produced by completed tasks."""
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -81,6 +84,24 @@ async def _get_completed_task(task_id: int) -> TaskModel:
     return task
 
 
+async def _get_task_video_file(task_id: int, file_index: int) -> Path:
+    task = await _get_completed_task(task_id)
+    files = await _task_downloaded_video_files(task)
+    if file_index < 0 or file_index >= len(files):
+        raise HTTPException(status_code=404, detail="Downloaded file not found")
+    return files[file_index]
+
+
+def _open_with_system_player(path: Path) -> None:
+    """Open a video with the operating system's default associated application."""
+    if sys.platform == "win32":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
+
+
 @router.get("/file/{task_id}", summary="获取任务下载文件列表")
 async def get_task_files(task_id: int):
     """Return video files recorded for a completed task."""
@@ -95,12 +116,7 @@ async def get_task_files(task_id: int):
 @router.get("/file/{task_id}/{file_index}", summary="下载任务视频文件")
 async def download_task_file(task_id: int, file_index: int) -> FileResponse:
     """Download one recorded video file by task id and file index."""
-    task = await _get_completed_task(task_id)
-    files = await _task_downloaded_video_files(task)
-    if file_index < 0 or file_index >= len(files):
-        raise HTTPException(status_code=404, detail="Downloaded file not found")
-
-    path = files[file_index]
+    path = await _get_task_video_file(task_id, file_index)
     return FileResponse(
         path=str(path),
         filename=path.name,
@@ -109,3 +125,22 @@ async def download_task_file(task_id: int, file_index: int) -> FileResponse:
         ),
         content_disposition_type="inline",
     )
+
+
+@router.post("/file/{task_id}/{file_index}/open", summary="使用系统播放器打开视频")
+async def open_task_file(task_id: int, file_index: int) -> dict[str, str]:
+    """Open one recorded video with the desktop's default video application."""
+    if os.environ.get("BLSYNC_DESKTOP") != "1":
+        raise HTTPException(
+            status_code=403,
+            detail="Opening files with the system player is desktop-only",
+        )
+    path = await _get_task_video_file(task_id, file_index)
+    try:
+        _open_with_system_player(path)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to open video with the system player: {exc}",
+        ) from exc
+    return {"status": "opened"}

@@ -349,9 +349,9 @@ def main():
     setup_logger()
 
     uvicorn.run(
-        "blsync.main:app",
-        host="0.0.0.0",
-        port=8000,
+        app,
+        host=os.environ.get("BLSYNC_HOST", "0.0.0.0"),
+        port=int(os.environ.get("BLSYNC_PORT", "8000")),
         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
 

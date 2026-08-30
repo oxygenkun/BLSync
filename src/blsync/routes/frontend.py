@@ -1,12 +1,18 @@
 """Routes that serve the built frontend and its client-side routes."""
 
 import os
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-BASE_DIR = Path(os.environ.get("BLSYNC_BASE_DIR", Path(__file__).parents[3]))
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys._MEIPASS)
+elif configured_base_dir := os.environ.get("BLSYNC_BASE_DIR"):
+    BASE_DIR = Path(configured_base_dir)
+else:
+    BASE_DIR = Path(__file__).parents[3]
 STATIC_DIR = BASE_DIR / "static"
 
 router = APIRouter(tags=["前端"])

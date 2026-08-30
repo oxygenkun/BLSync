@@ -16,4 +16,12 @@ sync*/
 
 static/
 
+desktop/node_modules/
+desktop/src-tauri/binaries/
+desktop/src-tauri/icons/
+desktop/src-tauri/target/
+desktop/backend-dist/
+desktop/pyinstaller-build/
+desktop/*.spec
+
 .DS_Store
