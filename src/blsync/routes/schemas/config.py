@@ -70,7 +70,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 unit="秒",
                 min=1,
-                description="两次收藏夹扫描之间的等待时间。",
+                description="每次执行扫描同步的间隔时间，单位为秒。",
             ),
             ConfigFieldSchema(
                 key="request_timeout",
@@ -78,7 +78,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 unit="秒",
                 min=1,
-                description="访问 Bilibili 接口时的最长等待时间。",
+                description="请求同步信息的超时时间，单位为秒。",
             ),
             ConfigFieldSchema(
                 key="log_level",
@@ -93,13 +93,13 @@ CONFIG_SECTIONS = [
                     "ERROR",
                     "CRITICAL",
                 ],
-                description="控制服务端输出的日志详细程度。",
+                description="日志输出级别，可选 TRACE、DEBUG、INFO、SUCCESS、WARNING、ERROR、CRITICAL。",
             ),
             ConfigFieldSchema(
                 key="retry_failed_tasks",
                 label="自动重试失败任务",
                 type=FieldType.BOOLEAN,
-                description="扫描收藏夹时，将失败任务重新放回待下载队列。",
+                description="是否在定时扫描时自动重试失败任务。",
             ),
             ConfigFieldSchema(
                 key="max_concurrent_tasks",
@@ -107,7 +107,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 min=1,
                 max=64,
-                description="降低后不会中断运行中的任务；提高后立即允许更多任务启动。",
+                description="同时进行的最大下载任务数，默认为 3，不建议设置过多。",
             ),
             ConfigFieldSchema(
                 key="task_timeout",
@@ -115,6 +115,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 unit="秒",
                 min=1,
+                description="单个下载任务执行的超时时间，单位为秒。",
             ),
             ConfigFieldSchema(
                 key="download_retry_limit",
@@ -122,6 +123,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 min=0,
                 max=100,
+                description="单个媒体分块连续下载失败次数上限。",
             ),
             ConfigFieldSchema(
                 key="download_stall_timeout",
@@ -130,6 +132,7 @@ CONFIG_SECTIONS = [
                 unit="秒",
                 min=0.1,
                 step=0.1,
+                description="媒体分块无字节增长的超时时间，单位为秒。",
             ),
             ConfigFieldSchema(
                 key="download_url_refresh_retries",
@@ -137,6 +140,7 @@ CONFIG_SECTIONS = [
                 type=FieldType.INTEGER,
                 min=0,
                 max=20,
+                description="下载停滞后重新获取播放地址的次数。",
             ),
         ],
     ),
@@ -146,10 +150,18 @@ CONFIG_SECTIONS = [
         description="凭据只可覆盖或清空，接口不会返回已保存的明文。留空代表保持不变。",
         fields=[
             ConfigFieldSchema(
-                key="credential.sessdata", label="SESSDATA", type=FieldType.SECRET
+                key="credential.sessdata",
+                label="SESSDATA",
+                type=FieldType.SECRET,
+                required=True,
+                description="哔哩哔哩账号身份凭据，必填。",
             ),
             ConfigFieldSchema(
-                key="credential.bili_jct", label="bili_jct", type=FieldType.SECRET
+                key="credential.bili_jct",
+                label="bili_jct",
+                type=FieldType.SECRET,
+                required=True,
+                description="哔哩哔哩账号身份凭据，必填。",
             ),
             ConfigFieldSchema(
                 key="credential.buvid3", label="buvid3", type=FieldType.SECRET
@@ -169,7 +181,7 @@ CONFIG_SECTIONS = [
     ConfigSectionSchema(
         key="favorite_list",
         title="收藏夹同步",
-        description="以稳定的任务名管理收藏夹、保存路径、命名模板和下载后操作。",
+        description="管理收藏夹、保存路径、命名模板和下载后操作。",
         fields=[
             ConfigFieldSchema(
                 key="favorite_list",
@@ -181,28 +193,33 @@ CONFIG_SECTIONS = [
                         label="任务名",
                         type=FieldType.STRING,
                         required=True,
+                        description="设置任务名只用于任务列表显示",
                     ),
                     ConfigFieldSchema(
                         key="fid",
                         label="收藏夹 ID",
                         type=FieldType.INTEGER,
                         required=True,
+                        description="使用 -1 不需要监控收藏夹的任务",
                     ),
                     ConfigFieldSchema(
                         key="path",
                         label="下载路径",
                         type=FieldType.STRING,
                         required=True,
+                        description="可搭配 {YYYY}、{YY}、{MM}、{DD}、{HH}、{mm}、{SS} 时间占位符使用。例如：sync/{YYYY}{MM}/",
                     ),
                     ConfigFieldSchema(
                         key="name_template",
                         label="文件名模板",
                         type=FieldType.STRING,
+                        description="(可选) 支持 yutto 原生命名模板",
                     ),
                     ConfigFieldSchema(
                         key="name_group",
-                        label="分组名模板",
+                        label="文件名多P模板",
                         type=FieldType.STRING,
+                        description="(可选) 用法同“文件名模板”",
                     ),
                 ],
                 postprocess_actions=["move", "remove", "save"],

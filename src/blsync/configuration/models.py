@@ -85,14 +85,29 @@ type PostprocessConfigT = Annotated[
 ]
 
 
+DEFAULT_NAME_TEMPLATE = "[{username}]{name}({bvid})"
+DEFAULT_NAME_GROUP_TEMPLATE = "[{username}]{title}({bvid})/P{id:0>3}-{name}"
+
+
 class FavoriteListConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     fid: str
     path: str
-    name: str | None = None
-    name_group: str | None = None
+    name: str = DEFAULT_NAME_TEMPLATE
+    name_group: str = DEFAULT_NAME_GROUP_TEMPLATE
     postprocess: list[PostprocessConfigT] | None = None
+
+    @field_validator("name", "name_group", mode="before")
+    @classmethod
+    def use_default_name_template(cls, value: object, info: ValidationInfo) -> object:
+        if value not in (None, ""):
+            return value
+        return (
+            DEFAULT_NAME_GROUP_TEMPLATE
+            if info.field_name == "name_group"
+            else DEFAULT_NAME_TEMPLATE
+        )
 
     @field_validator("fid", mode="before")
     @classmethod
